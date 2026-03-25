@@ -530,7 +530,7 @@ function normalizeSingleStickerPack(value: unknown, fallbackIndex = 0): StickerP
   };
 }
 
-function normalizeStickerPacksData(value: unknown): StickerPack[] {
+export function normalizeStickerPacksData(value: unknown): StickerPack[] {
   if (!Array.isArray(value)) return [];
 
   const seen = new Set<string>();

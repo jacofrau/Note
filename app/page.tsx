@@ -21,9 +21,11 @@ import {
   type DesktopOpenNoteFilePayload,
 } from "@/lib/desktopBridge";
 import {
+  BACKUP_FILE_NAME,
   getSingleNoteFileName,
   NOTE_FILE_MIME,
   parseNotesImportFile,
+  serializeAppBackupFile,
   serializeSingleNoteFile,
 } from "@/lib/noteFiles";
 import {
@@ -56,12 +58,14 @@ import {
   getStoredCloudSyncAccessKey,
   hasCloudSyncAccessKey,
   isCloudSyncEnabledClient,
+  loadStickerPacks,
   loadNotes,
   normalizeNotesData,
   resetStoredAppData,
   saveNotesLocallyImmediately,
   saveNotes,
   saveNotesImmediately,
+  saveStickerPacks,
   setStoredCloudSyncAccessKey,
   sortNotes,
 } from "@/lib/storage";
@@ -696,6 +700,45 @@ export default function Home() {
     [activateNote, flushPendingSave, persist],
   );
 
+  const restoreImportedBackup = useCallback(
+    async (options: {
+      appSettings: ReturnType<typeof getStoredAppSettings> | null;
+      designMode: ReturnType<typeof getStoredDesignMode> | null;
+      notes: Note[];
+      stickerPacks: Awaited<ReturnType<typeof loadStickerPacks>>;
+    }) => {
+      flushPendingSave();
+
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      pendingSaveRef.current = false;
+
+      const nextNotes = normalizeTitles(sortNotes(options.notes));
+      await saveNotes(nextNotes);
+      await saveStickerPacks(options.stickerPacks);
+
+      const nextAppSettings = options.appSettings ?? getStoredAppSettings();
+      setStoredAppSettings(nextAppSettings);
+      setDocumentAppSettings(nextAppSettings);
+
+      const nextDesignMode = options.designMode ?? getStoredDesignMode();
+      setStoredDesignMode(nextDesignMode);
+      setDocumentDesignMode(nextDesignMode);
+
+      setNotes(nextNotes);
+      latestNotesRef.current = nextNotes;
+      setShowArchived(false);
+      setSelectedTag(null);
+      setQuery("");
+      setHasManualSelectionCleared(false);
+      setActiveId(nextNotes[0]?.id ?? null);
+      setHasCloudKey(hasCloudSyncAccessKey());
+    },
+    [flushPendingSave],
+  );
+
   const processPendingNoteFiles = useCallback(async () => {
     if (!hasLoadedNotesRef.current || isProcessingPendingNoteFilesRef.current) return;
     if (pendingNoteFilePayloadsRef.current.length === 0) return;
@@ -708,17 +751,32 @@ export default function Home() {
         if (!payload) continue;
 
         const parsed = parseNotesImportFile(payload.content);
-        if (!parsed || parsed.kind !== "single-note") {
-          alert(`Il file ${payload.fileName} non contiene una singola nota valida.`);
+        if (!parsed) {
+          alert(`Il file ${payload.fileName} non contiene un file .nby valido.`);
           continue;
         }
 
-        await openIncomingSingleNote(parsed.note);
+        if (parsed.kind === "single-note") {
+          await openIncomingSingleNote(parsed.note);
+          continue;
+        }
+
+        const confirmed = confirm(
+          `Il file ${payload.fileName} contiene un backup completo dell'app.\n\nVuoi ripristinarlo ora?`,
+        );
+        if (!confirmed) {
+          continue;
+        }
+
+        await restoreImportedBackup(parsed);
+        alert("Backup ripristinato. L'app verrà ricaricata per applicare tutto.");
+        window.location.reload();
+        return;
       }
     } finally {
       isProcessingPendingNoteFilesRef.current = false;
     }
-  }, [openIncomingSingleNote]);
+  }, [openIncomingSingleNote, restoreImportedBackup]);
 
   useEffect(() => {
     const unsubscribe = subscribeDesktopOpenNoteFile((payload) => {
@@ -1171,13 +1229,34 @@ export default function Home() {
     }
   }
 
-  function downloadBackup() {
-    const data = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), notes }, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
+  async function downloadBackup() {
+    const data = serializeAppBackupFile({
+      notes: latestNotesRef.current,
+      stickerPacks: await loadStickerPacks(),
+      appSettings: getStoredAppSettings(),
+      designMode: getStoredDesignMode(),
+    });
+
+    if (window.noteDiJacoDesktop?.saveNoteFileToDesktop) {
+      const result = await saveDesktopNoteFileToDesktop({
+        content: data,
+        fileName: BACKUP_FILE_NAME,
+      });
+
+      if (!result.ok) {
+        alert(`Salvataggio backup .nby non riuscito.\n\nDettagli: ${result.error || "Errore sconosciuto."}`);
+        return;
+      }
+
+      alert(`Backup salvato.\n\n${result.filePath}`);
+      return;
+    }
+
+    const blob = new Blob([data], { type: NOTE_FILE_MIME });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "notes-backup.json";
+    a.download = BACKUP_FILE_NAME;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1227,6 +1306,16 @@ export default function Home() {
         return;
       }
 
+      if (parsed.format === "nby-backup") {
+        const confirmed = confirm("Questo file contiene un backup completo. OK = ripristina tutto adesso.");
+        if (!confirmed) return;
+
+        await restoreImportedBackup(parsed);
+        alert("Backup ripristinato. L'app verrà ricaricata per applicare tutto.");
+        window.location.reload();
+        return;
+      }
+
       const incoming = parsed.notes;
 
       const mode = confirm("OK = UNISCI con le note esistenti. Annulla = SOSTITUISCI tutto.");
@@ -1243,7 +1332,7 @@ export default function Home() {
       const replacement = persisted.find((note) => Boolean(note.archived) === showArchived);
       activateNote(replacement?.id ?? null);
     } catch {
-      alert("Il file selezionato non contiene un backup JSON o NBY valido.");
+      alert("Il file selezionato non contiene un backup valido.");
     }
   }
 

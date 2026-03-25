@@ -67,6 +67,7 @@
       ]
     },
     "mac": {
+      "icon": "public/icons/notedijaco_icon.png",
       "category": "public.app-category.productivity"
     },
     "nsis": {

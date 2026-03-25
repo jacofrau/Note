@@ -1,29 +1,37 @@
+import type { AppSettings } from "./appSettings";
+import { normalizeAppSettings } from "./appSettings";
+import type { DesignMode } from "./designMode";
+import { normalizeDesignMode } from "./designMode";
 import { getNoteTitleFromDoc as titleFromDoc } from "./noteText";
-import { normalizeNotesData } from "./storage";
-import type { Note } from "./types";
+import { normalizeNotesData, normalizeStickerPacksData } from "./storage";
+import type { Note, StickerPack } from "./types";
 
 export const NOTE_FILE_EXTENSION = ".nby";
 export const NOTE_FILE_KIND = "note-di-jaco/single-note";
+export const BACKUP_FILE_KIND = "note-di-jaco/app-backup";
 export const NOTE_FILE_VERSION = 1;
 export const NOTE_FILE_MIME = "application/x-note-by-jaco+json";
+export const BACKUP_FILE_NAME = `note_backup${NOTE_FILE_EXTENSION}`;
 
 type ParsedBase = {
   exportedAt?: string;
-  note: Note;
-  notes: [Note];
 };
 
 export type ParsedNotesImportFile =
   | (ParsedBase & {
       kind: "single-note";
       format: "nby" | "legacy-single-json";
+      note: Note;
+      notes: [Note];
     })
-  | {
+  | (ParsedBase & {
       kind: "backup";
-      format: "json-backup";
-      exportedAt?: string;
+      format: "nby-backup" | "json-backup";
       notes: Note[];
-    };
+      stickerPacks: StickerPack[];
+      appSettings: AppSettings | null;
+      designMode: DesignMode | null;
+    });
 
 function normalizeExportedAt(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -62,6 +70,27 @@ export function serializeSingleNoteFile(note: Note) {
   );
 }
 
+export function serializeAppBackupFile(payload: {
+  notes: Note[];
+  stickerPacks: StickerPack[];
+  appSettings: AppSettings;
+  designMode: DesignMode;
+}) {
+  return JSON.stringify(
+    {
+      kind: BACKUP_FILE_KIND,
+      version: NOTE_FILE_VERSION,
+      exportedAt: new Date().toISOString(),
+      notes: payload.notes,
+      stickerPacks: payload.stickerPacks,
+      appSettings: payload.appSettings,
+      designMode: payload.designMode,
+    },
+    null,
+    2,
+  );
+}
+
 export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | null {
   let parsed: unknown;
 
@@ -80,6 +109,9 @@ export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | 
     kind?: unknown;
     note?: unknown;
     notes?: unknown;
+    stickerPacks?: unknown;
+    appSettings?: unknown;
+    designMode?: unknown;
     version?: unknown;
   };
   const exportedAt = normalizeExportedAt(record.exportedAt);
@@ -94,6 +126,18 @@ export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | 
       exportedAt,
       note,
       notes: [note],
+    };
+  }
+
+  if (record.kind === BACKUP_FILE_KIND && record.version === NOTE_FILE_VERSION) {
+    return {
+      kind: "backup",
+      format: "nby-backup",
+      exportedAt,
+      notes: normalizeNotesData(record.notes),
+      stickerPacks: normalizeStickerPacksData(record.stickerPacks),
+      appSettings: typeof record.appSettings === "undefined" ? null : normalizeAppSettings(record.appSettings),
+      designMode: typeof record.designMode === "undefined" ? null : normalizeDesignMode(record.designMode),
     };
   }
 
@@ -117,5 +161,8 @@ export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | 
     format: "json-backup",
     exportedAt,
     notes,
+    stickerPacks: [],
+    appSettings: null,
+    designMode: null,
   };
 }

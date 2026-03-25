@@ -36,11 +36,12 @@ Le tue note, in una desktop app elegante, veloce e piena di personalita.
 - categorie dedicate per tenere tutto in ordine
 
 ### Portare le note dove vuoi
-- esporta tutte le note in backup JSON
+- esporta tutti i dati locali in `note_backup.nby`
 - salva una singola nota come file `.nby`
+- nella desktop app i file `.nby` vengono salvati direttamente sul Desktop
 - apri una nota `.nby` con doppio click nella desktop app
-- importa backup completi o singole note
-- scegli se unire i contenuti o sostituire tutto
+- importa backup `.nby`, backup JSON legacy o singole note
+- i backup `.nby` ripristinano note, sticker e impostazioni locali
 
 ### Tenere tutto sincronizzato
 - sync cloud opzionale
