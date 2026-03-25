@@ -33,15 +33,18 @@ jobs:
           $cacheRoot = Join-Path $env:LOCALAPPDATA "electron-builder\Cache"
           $winCodeSignRoot = Join-Path $cacheRoot "winCodeSign"
           $targetDir = Join-Path $winCodeSignRoot "winCodeSign-2.6.0"
-
-          if (Test-Path $targetDir) {
-            Write-Host "winCodeSign cache gia pronto in $targetDir"
-            exit 0
-          }
+          $archivePath = Join-Path $winCodeSignRoot "winCodeSign-2.6.0.7z"
 
           New-Item -ItemType Directory -Force -Path $winCodeSignRoot | Out-Null
 
-          $archivePath = Join-Path $winCodeSignRoot "winCodeSign-2.6.0.7z"
+          if (Test-Path $targetDir) {
+            Remove-Item -Recurse -Force $targetDir
+          }
+
+          if (Test-Path $archivePath) {
+            Remove-Item -Force $archivePath
+          }
+
           $sevenZip = (Resolve-Path ".\node_modules\7zip-bin\win\x64\7za.exe").Path
 
           Invoke-WebRequest `
