@@ -27,8 +27,40 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build Windows artifacts
-        run: npm run desktop:build:win
+      - name: Prepare Windows signing cache
+        shell: pwsh
+        run: |
+          $cacheRoot = Join-Path $env:LOCALAPPDATA "electron-builder\Cache"
+          $winCodeSignRoot = Join-Path $cacheRoot "winCodeSign"
+          $targetDir = Join-Path $winCodeSignRoot "winCodeSign-2.6.0"
+
+          if (Test-Path $targetDir) {
+            Write-Host "winCodeSign cache gia pronto in $targetDir"
+            exit 0
+          }
+
+          New-Item -ItemType Directory -Force -Path $winCodeSignRoot | Out-Null
+
+          $archivePath = Join-Path $winCodeSignRoot "winCodeSign-2.6.0.7z"
+          $sevenZip = (Resolve-Path ".\node_modules\7zip-bin\win\x64\7za.exe").Path
+
+          Invoke-WebRequest `
+            -Uri "https://github.com/electron-userland/electron-builder-binaries/releases/download/winCodeSign-2.6.0/winCodeSign-2.6.0.7z" `
+            -OutFile $archivePath
+
+          & $sevenZip x "-snld" "-bd" $archivePath "-o$targetDir" "-xr!darwin"
+
+      - name: Sync runtime env
+        run: npm run runtime:env
+
+      - name: Build installer assets
+        run: npm run installer:assets
+
+      - name: Build Next app
+        run: npm run build
+
+      - name: Package Windows artifacts
+        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --win nsis
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -47,7 +79,7 @@ jobs:
 
   build-macos:
     name: Build macOS
-    runs-on: macos-13
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout
@@ -62,11 +94,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build macOS artifacts
-        run: |
-          npm run runtime:env
-          npm run build
-          node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64
+      - name: Sync runtime env
+        run: npm run runtime:env
+
+      - name: Build Next app
+        run: npm run build
+
+      - name: Package macOS artifacts
+        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
