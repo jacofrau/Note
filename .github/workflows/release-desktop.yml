@@ -137,15 +137,13 @@ jobs:
         run: npm run build
 
       - name: Package macOS artifacts
-        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
+        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac zip --x64 --publish never
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
-          path: |
-            dist-desktop/*.dmg
-            dist-desktop/*.zip
+          path: dist-desktop/*.zip
           if-no-files-found: error
 
       - name: Upload macOS diagnostics
