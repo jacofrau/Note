@@ -96,7 +96,7 @@ jobs:
         run: npm run build
 
       - name: Package Windows artifacts
-        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --win nsis
+        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --win nsis --publish never
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
@@ -137,7 +137,7 @@ jobs:
         run: npm run build
 
       - name: Package macOS artifacts
-        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64
+        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
