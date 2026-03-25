@@ -3,6 +3,23 @@ export type DesktopPrintPreviewResult = {
   error?: string;
 };
 
+export type DesktopOpenNoteFilePayload = {
+  content: string;
+  fileName: string;
+  filePath: string;
+};
+
+export type DesktopSaveNoteFileRequest = {
+  content: string;
+  fileName: string;
+};
+
+export type DesktopSaveNoteFileResult = {
+  ok: boolean;
+  error?: string;
+  filePath?: string;
+};
+
 type DesktopStorageBridge = {
   getItemSync: (key: string) => unknown;
   getItem: (key: string) => Promise<unknown>;
@@ -18,6 +35,8 @@ declare global {
       platform?: string;
       openPrintPreview?: () => Promise<DesktopPrintPreviewResult>;
       onBeforeClose?: (listener: () => void) => (() => void) | void;
+      onOpenNoteFile?: (listener: (payload: DesktopOpenNoteFilePayload) => void) => (() => void) | void;
+      saveNoteFileToDesktop?: (payload: DesktopSaveNoteFileRequest) => Promise<DesktopSaveNoteFileResult>;
       storage?: DesktopStorageBridge;
     };
   }
@@ -37,6 +56,35 @@ export function getDesktopPlatform(): string | null {
 
   const platform = window.noteDiJacoDesktop?.platform;
   return typeof platform === "string" && platform.trim() ? platform : null;
+}
+
+export function subscribeDesktopOpenNoteFile(listener: (payload: DesktopOpenNoteFilePayload) => void) {
+  if (typeof window === "undefined") return () => {};
+
+  const subscribe = window.noteDiJacoDesktop?.onOpenNoteFile;
+  if (!subscribe) return () => {};
+
+  const unsubscribe = subscribe(listener);
+  return typeof unsubscribe === "function" ? unsubscribe : () => {};
+}
+
+export async function saveDesktopNoteFileToDesktop(payload: DesktopSaveNoteFileRequest) {
+  if (typeof window === "undefined") {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopSaveNoteFileResult;
+  }
+
+  const saveFile = window.noteDiJacoDesktop?.saveNoteFileToDesktop;
+  if (!saveFile) {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopSaveNoteFileResult;
+  }
+
+  return saveFile(payload);
 }
 
 export function getDesktopStoredValueSync<T>(key: string): T | undefined {

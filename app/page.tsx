@@ -14,7 +14,18 @@ import NoteList from "@/components/NoteList";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
 import PrintIcon from "@/components/PrintIcon";
 import { CHANGELOG } from "@/lib/changelog";
-import { getDesktopPlatform } from "@/lib/desktopBridge";
+import {
+  getDesktopPlatform,
+  saveDesktopNoteFileToDesktop,
+  subscribeDesktopOpenNoteFile,
+  type DesktopOpenNoteFilePayload,
+} from "@/lib/desktopBridge";
+import {
+  getSingleNoteFileName,
+  NOTE_FILE_MIME,
+  parseNotesImportFile,
+  serializeSingleNoteFile,
+} from "@/lib/noteFiles";
 import {
   getNoteBodySearchTextFromDoc as bodyTextSearchFromDoc,
   getNoteTitleFromDoc as titleFromDoc,
@@ -299,6 +310,7 @@ function FeedbackIcon() {
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [isInitialNotesLoaded, setIsInitialNotesLoaded] = useState(false);
   const [hasManualSelectionCleared, setHasManualSelectionCleared] = useState(false);
   const [showArchived, setShowArchived] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
@@ -348,6 +360,8 @@ export default function Home() {
   const appSettings = useSyncExternalStore(subscribeAppSettings, getDocumentAppSettings, () => DEFAULT_APP_SETTINGS);
   const designMode = useSyncExternalStore(subscribeDesignMode, getDocumentDesignMode, () => DEFAULT_DESIGN_MODE);
   const pendingPrintNoteIdRef = useRef<string | null>(null);
+  const pendingNoteFilePayloadsRef = useRef<DesktopOpenNoteFilePayload[]>([]);
+  const isProcessingPendingNoteFilesRef = useRef(false);
   const hasLoadedNotesRef = useRef(false);
   const tagDialogInputRef = useRef<HTMLInputElement | null>(null);
   const cloudKeyInputRef = useRef<HTMLInputElement | null>(null);
@@ -361,6 +375,7 @@ export default function Home() {
       setNotes(loaded);
       latestNotesRef.current = loaded;
       hasLoadedNotesRef.current = true;
+      setIsInitialNotesLoaded(true);
       setActiveId(loaded[0]?.id ?? null);
       setHasManualSelectionCleared(false);
     })();
@@ -662,6 +677,64 @@ export default function Home() {
 
     return sorted;
   }, []);
+
+  const openIncomingSingleNote = useCallback(
+    async (incomingNote: Note) => {
+      flushPendingSave();
+
+      const next = normalizeTitles([
+        incomingNote,
+        ...latestNotesRef.current.filter((entry) => entry.id !== incomingNote.id),
+      ]);
+
+      await persist(next);
+      setShowArchived(Boolean(incomingNote.archived));
+      setSelectedTag(null);
+      setQuery("");
+      activateNote(incomingNote.id);
+    },
+    [activateNote, flushPendingSave, persist],
+  );
+
+  const processPendingNoteFiles = useCallback(async () => {
+    if (!hasLoadedNotesRef.current || isProcessingPendingNoteFilesRef.current) return;
+    if (pendingNoteFilePayloadsRef.current.length === 0) return;
+
+    isProcessingPendingNoteFilesRef.current = true;
+
+    try {
+      while (pendingNoteFilePayloadsRef.current.length > 0) {
+        const payload = pendingNoteFilePayloadsRef.current.shift();
+        if (!payload) continue;
+
+        const parsed = parseNotesImportFile(payload.content);
+        if (!parsed || parsed.kind !== "single-note") {
+          alert(`Il file ${payload.fileName} non contiene una singola nota valida.`);
+          continue;
+        }
+
+        await openIncomingSingleNote(parsed.note);
+      }
+    } finally {
+      isProcessingPendingNoteFilesRef.current = false;
+    }
+  }, [openIncomingSingleNote]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeDesktopOpenNoteFile((payload) => {
+      pendingNoteFilePayloadsRef.current.push(payload);
+      if (hasLoadedNotesRef.current) {
+        void processPendingNoteFiles();
+      }
+    });
+
+    return unsubscribe;
+  }, [processPendingNoteFiles]);
+
+  useEffect(() => {
+    if (!isInitialNotesLoaded) return;
+    void processPendingNoteFiles();
+  }, [isInitialNotesLoaded, processPendingNoteFiles]);
 
   const newNote = useCallback(async () => {
     const id = nanoid();
@@ -1109,22 +1182,33 @@ export default function Home() {
     URL.revokeObjectURL(url);
   }
 
-  function downloadSingleNote(id: string) {
+  async function downloadSingleNote(id: string) {
     const note = notes.find((entry) => entry.id === id);
     if (!note) return;
 
-    const fileLabel = (titleFromDoc(note.doc) || "nota")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/gi, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 40) || "nota";
+    const fileName = getSingleNoteFileName(note);
+    const data = serializeSingleNoteFile(note);
 
-    const data = JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), notes: [note] }, null, 2);
-    const blob = new Blob([data], { type: "application/json" });
+    if (window.noteDiJacoDesktop?.saveNoteFileToDesktop) {
+      const result = await saveDesktopNoteFileToDesktop({
+        content: data,
+        fileName,
+      });
+
+      if (!result.ok) {
+        alert(`Salvataggio .nby non riuscito.\n\nDettagli: ${result.error || "Errore sconosciuto."}`);
+        return;
+      }
+
+      alert(`Nota salvata sul Desktop.\n\n${result.filePath}`);
+      return;
+    }
+
+    const blob = new Blob([data], { type: NOTE_FILE_MIME });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${fileLabel}.json`;
+    a.download = fileName;
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -1132,18 +1216,24 @@ export default function Home() {
   async function importBackup(file: File) {
     try {
       const txt = await file.text();
-      const parsed = JSON.parse(txt);
-      const incoming = normalizeNotesData(parsed?.notes);
-      if (!incoming.length) {
+      const parsed = parseNotesImportFile(txt);
+      if (!parsed) {
         alert("File non valido o vuoto.");
         return;
       }
+
+      if (parsed.kind === "single-note") {
+        await openIncomingSingleNote(parsed.note);
+        return;
+      }
+
+      const incoming = parsed.notes;
 
       const mode = confirm("OK = UNISCI con le note esistenti. Annulla = SOSTITUISCI tutto.");
       let next: Note[];
       if (mode) {
         const map = new Map<string, Note>();
-        for (const n of notes) map.set(n.id, n);
+        for (const n of latestNotesRef.current) map.set(n.id, n);
         for (const n of incoming) map.set(n.id, n);
         next = normalizeTitles(normalizeNotesData([...map.values()]));
       } else {
@@ -1153,7 +1243,7 @@ export default function Home() {
       const replacement = persisted.find((note) => Boolean(note.archived) === showArchived);
       activateNote(replacement?.id ?? null);
     } catch {
-      alert("Il file selezionato non contiene un backup JSON valido.");
+      alert("Il file selezionato non contiene un backup JSON o NBY valido.");
     }
   }
 

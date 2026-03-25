@@ -10,6 +10,11 @@ const desktopStorageSnapshot =
   rawDesktopStorageSnapshot && typeof rawDesktopStorageSnapshot === "object" && !Array.isArray(rawDesktopStorageSnapshot)
     ? rawDesktopStorageSnapshot
     : {};
+const rawPendingNoteFiles = ipcRenderer.sendSync("desktop-note-file:get-pending-sync");
+const pendingNoteFiles = Array.isArray(rawPendingNoteFiles)
+  ? rawPendingNoteFiles.map((entry) => cloneStructuredValue(entry))
+  : [];
+const openNoteFileListeners = new Set();
 
 function getSnapshotValue(key) {
   if (!Object.prototype.hasOwnProperty.call(desktopStorageSnapshot, key)) {
@@ -18,6 +23,31 @@ function getSnapshotValue(key) {
 
   return cloneStructuredValue(desktopStorageSnapshot[key]);
 }
+
+function flushPendingNoteFiles() {
+  if (!openNoteFileListeners.size || pendingNoteFiles.length === 0) {
+    return;
+  }
+
+  const bufferedPayloads = pendingNoteFiles.splice(0, pendingNoteFiles.length).map((entry) => cloneStructuredValue(entry));
+
+  queueMicrotask(() => {
+    for (const payload of bufferedPayloads) {
+      for (const listener of openNoteFileListeners) {
+        try {
+          listener(cloneStructuredValue(payload));
+        } catch {
+          // Ignora errori renderer per singolo listener.
+        }
+      }
+    }
+  });
+}
+
+ipcRenderer.on("desktop:open-note-file", (_event, payload) => {
+  pendingNoteFiles.push(cloneStructuredValue(payload));
+  flushPendingNoteFiles();
+});
 
 contextBridge.exposeInMainWorld("noteDiJacoDesktop", {
   platform: process.platform,
@@ -40,6 +70,18 @@ contextBridge.exposeInMainWorld("noteDiJacoDesktop", {
       ipcRenderer.removeListener("desktop:before-close", wrappedListener);
     };
   },
+  onOpenNoteFile: (listener) => {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+
+    openNoteFileListeners.add(listener);
+    flushPendingNoteFiles();
+    return () => {
+      openNoteFileListeners.delete(listener);
+    };
+  },
+  saveNoteFileToDesktop: (payload) => ipcRenderer.invoke("desktop-note-file:save-to-desktop", payload),
   storage: {
     getItemSync: (key) => getSnapshotValue(key),
     getItem: async (key) => getSnapshotValue(key),

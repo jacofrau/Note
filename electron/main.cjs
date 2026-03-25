@@ -1,6 +1,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const { execFileSync } = require("node:child_process");
 const { parse, pathToFileURL } = require("node:url");
 const next = require("next");
 const { app, BrowserWindow, dialog, ipcMain } = require("electron");
@@ -15,12 +16,16 @@ const isFileLogEnabled = app.isPackaged || process.env.ELECTRON_ENABLE_FILE_LOG 
 const defaultDevUrl = "http://localhost:3000";
 const DEV_SERVER_PROBE_ATTEMPTS = 16;
 const DEV_SERVER_PROBE_INTERVAL_MS = 250;
+const NOTE_FILE_EXTENSION = ".nby";
+const NOTE_FILE_PROG_ID = "NoteDiJaco.NoteFile";
+const NOTE_FILE_DESCRIPTION = "Nota Note by Jaco";
 
 let mainWindow = null;
 let server = null;
 let nextApp = null;
 const previewWindows = new Set();
 let desktopStorageCache = null;
+let pendingNoteFilePayloads = [];
 
 function parseEnvFile(rawContent) {
   const entries = {};
@@ -61,6 +66,88 @@ function applyEnvFile(envPath) {
 function cloneStructuredValue(value) {
   if (typeof value === "undefined" || value === null) return value;
   return JSON.parse(JSON.stringify(value));
+}
+
+function normalizeCandidateFilePath(rawValue) {
+  if (typeof rawValue !== "string") return null;
+
+  const trimmed = rawValue.trim().replace(/^"(.*)"$/, "$1");
+  if (!trimmed) return null;
+
+  return path.resolve(trimmed);
+}
+
+function isNoteFilePath(filePath) {
+  if (!filePath || typeof filePath !== "string") return false;
+  if (path.extname(filePath).toLowerCase() !== NOTE_FILE_EXTENSION) return false;
+
+  try {
+    return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function extractNoteFilePathsFromArgv(argv = []) {
+  if (!Array.isArray(argv) || argv.length === 0) return [];
+
+  const collectedPaths = [];
+  const seenPaths = new Set();
+
+  for (const rawArg of argv) {
+    const candidatePath = normalizeCandidateFilePath(rawArg);
+    if (!candidatePath || !isNoteFilePath(candidatePath) || seenPaths.has(candidatePath)) continue;
+
+    seenPaths.add(candidatePath);
+    collectedPaths.push(candidatePath);
+  }
+
+  return collectedPaths;
+}
+
+function sanitizeNoteFileName(fileName) {
+  const normalized = typeof fileName === "string" ? fileName.trim() : "";
+  const withExtension = normalized.toLowerCase().endsWith(NOTE_FILE_EXTENSION)
+    ? normalized
+    : `${normalized || "nota"}${NOTE_FILE_EXTENSION}`;
+  const parsed = path.parse(withExtension);
+  const safeName = parsed.name
+    .replace(/[<>:"/\\|?*\u0000-\u001f]+/g, "-")
+    .replace(/\s+/g, " ")
+    .replace(/[. ]+$/g, "")
+    .trim()
+    .slice(0, 80);
+
+  return `${safeName || "nota"}${NOTE_FILE_EXTENSION}`;
+}
+
+function getUniqueDesktopNoteFilePath(fileName) {
+  const desktopDir = app.getPath("desktop");
+  const safeFileName = sanitizeNoteFileName(fileName);
+  const parsed = path.parse(safeFileName);
+  let nextPath = path.join(desktopDir, safeFileName);
+  let suffix = 2;
+
+  while (fs.existsSync(nextPath)) {
+    nextPath = path.join(desktopDir, `${parsed.name} (${suffix})${NOTE_FILE_EXTENSION}`);
+    suffix += 1;
+  }
+
+  return nextPath;
+}
+
+function readNoteFilePayload(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, "utf8");
+    return {
+      content,
+      fileName: path.basename(filePath),
+      filePath,
+    };
+  } catch (error) {
+    logDesktop("note file read failed", { filePath }, error);
+    throw error;
+  }
 }
 
 function ensureStableUserDataPath() {
@@ -224,6 +311,85 @@ function logDesktop(...parts) {
 
 function getIconPath() {
   return path.join(app.getAppPath(), "public", "icons", "notedijaco_icon.png");
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function emitNoteFilePayload(payload) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    pendingNoteFilePayloads.push(cloneStructuredValue(payload));
+    return false;
+  }
+
+  try {
+    mainWindow.webContents.send("desktop:open-note-file", cloneStructuredValue(payload));
+    return true;
+  } catch (error) {
+    logDesktop("note file event send failed", error);
+    pendingNoteFilePayloads.push(cloneStructuredValue(payload));
+    return false;
+  }
+}
+
+function openNoteFileFromPath(filePath) {
+  if (!isNoteFilePath(filePath)) return false;
+
+  try {
+    const payload = readNoteFilePayload(filePath);
+    emitNoteFilePayload(payload);
+    logDesktop("note file opened", { filePath });
+    return true;
+  } catch {
+    dialog.showErrorBox(
+      "Impossibile aprire il file nota",
+      `Non sono riuscito a leggere il file selezionato:\n${filePath}`,
+    );
+    return false;
+  }
+}
+
+function registerWindowsNoteFileAssociation() {
+  if (process.platform !== "win32" || !app.isPackaged) return false;
+
+  const executablePath = process.execPath;
+  const registryEntries = [
+    ["HKCU\\Software\\Classes\\.nby", NOTE_FILE_PROG_ID],
+    [`HKCU\\Software\\Classes\\${NOTE_FILE_PROG_ID}`, NOTE_FILE_DESCRIPTION],
+    [`HKCU\\Software\\Classes\\${NOTE_FILE_PROG_ID}\\DefaultIcon`, `"${executablePath}",0`],
+    [`HKCU\\Software\\Classes\\${NOTE_FILE_PROG_ID}\\shell\\open\\command`, `"${executablePath}" "%1"`],
+  ];
+
+  try {
+    for (const [key, value] of registryEntries) {
+      execFileSync("reg", ["add", key, "/ve", "/d", value, "/f"], {
+        windowsHide: true,
+      });
+    }
+
+    try {
+      const ie4uinitPath = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "ie4uinit.exe");
+      if (fs.existsSync(ie4uinitPath)) {
+        execFileSync(ie4uinitPath, ["-show"], {
+          windowsHide: true,
+        });
+      }
+    } catch {
+      // Aggiornamento icone best effort.
+    }
+
+    logDesktop("note file association registered", { executablePath });
+    return true;
+  } catch (error) {
+    logDesktop("note file association registration failed", error);
+    return false;
+  }
 }
 
 function validatePackagedAppFiles(appDir) {
@@ -446,6 +612,36 @@ ipcMain.handle("desktop:open-print-preview", async () => {
   }
 });
 
+ipcMain.handle("desktop-note-file:save-to-desktop", async (_event, payload) => {
+  const content = typeof payload?.content === "string" ? payload.content : "";
+  const fileName = typeof payload?.fileName === "string" ? payload.fileName : "";
+
+  if (!content.trim()) {
+    return {
+      ok: false,
+      error: "Il contenuto del file nota e vuoto.",
+    };
+  }
+
+  try {
+    const targetPath = getUniqueDesktopNoteFilePath(fileName);
+    fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+    fs.writeFileSync(targetPath, content, "utf8");
+    logDesktop("note file saved to desktop", { targetPath });
+    return {
+      ok: true,
+      filePath: targetPath,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Errore sconosciuto.";
+    logDesktop("note file save failed", error);
+    return {
+      ok: false,
+      error: message,
+    };
+  }
+});
+
 ipcMain.handle("desktop-storage:set-item", async (_event, payload) => {
   if (!payload || typeof payload.key !== "string") {
     return undefined;
@@ -462,6 +658,11 @@ ipcMain.on("desktop-storage:get-snapshot-sync", (event) => {
   event.returnValue = cloneStructuredValue(readDesktopStorageSnapshot());
 });
 
+ipcMain.on("desktop-note-file:get-pending-sync", (event) => {
+  event.returnValue = cloneStructuredValue(pendingNoteFilePayloads);
+  pendingNoteFilePayloads = [];
+});
+
 ipcMain.on("desktop-storage:set-item-sync", (event, payload) => {
   if (!payload || typeof payload.key !== "string") {
     event.returnValue = undefined;
@@ -475,7 +676,29 @@ ipcMain.on("desktop-storage:remove-item-sync", (event, key) => {
   event.returnValue = removeDesktopStorageValue(key);
 });
 
-app.whenReady().then(createWindow);
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", (_event, argv) => {
+    const noteFilePaths = extractNoteFilePathsFromArgv(argv);
+    for (const filePath of noteFilePaths) {
+      openNoteFileFromPath(filePath);
+    }
+
+    focusMainWindow();
+  });
+
+  app.whenReady().then(async () => {
+    await createWindow();
+    const startupNoteFilePaths = extractNoteFilePathsFromArgv(process.argv);
+    for (const filePath of startupNoteFilePaths) {
+      openNoteFileFromPath(filePath);
+    }
+  });
+}
+
 app.on("ready", () => {
   logDesktop("electron ready");
   logDesktop("runtime env", {
@@ -484,6 +707,15 @@ app.on("ready", () => {
     hasSmtpUser: Boolean(process.env.SMTP_USER?.trim()),
     sources: loadedRuntimeEnvPaths,
   });
+  registerWindowsNoteFileAssociation();
+});
+
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  if (!isNoteFilePath(filePath)) return;
+
+  openNoteFileFromPath(filePath);
+  focusMainWindow();
 });
 
 app.on("window-all-closed", () => {

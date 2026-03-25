@@ -36,6 +36,13 @@
     "directories": {
       "output": "dist-desktop"
     },
+    "fileAssociations": [
+      {
+        "ext": "nby",
+        "name": "Note by Jaco",
+        "description": "Nota singola Note by Jaco"
+      }
+    ],
     "files": [
       "electron/**/*",
       ".next/**/*",

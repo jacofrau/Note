@@ -552,8 +552,8 @@ export default function NoteList({
                 ref={importInputRef}
                 className="noteImportInputHidden"
                 type="file"
-                accept="application/json"
-                aria-label="Importa note da file JSON"
+                accept=".json,.nby,application/json"
+                aria-label="Importa note da file JSON o NBY"
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) void onImport(f);
@@ -847,7 +847,7 @@ export default function NoteList({
                             strokeLinejoin="round"
                           />
                         </svg>
-                        Esporta nota
+                        Salva nota .nby
                       </button>
                       <button
                         className="noteMenuItem"
@@ -968,7 +968,7 @@ export default function NoteList({
                   strokeLinejoin="round"
                 />
               </svg>
-              Esporta nota
+              Salva nota .nby
             </button>
             <button
               className="noteMenuItem"
