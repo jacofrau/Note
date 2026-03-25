@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
+const path = require("path");
 const packageJson = require("./package.json");
 
 function getEnv(name) {
@@ -46,10 +47,21 @@ function getAzureSignOptions() {
   };
 }
 
+function hasWindowsSigningConfig() {
+  return Boolean(
+    getEnv("CSC_LINK") ||
+      getEnv("WIN_CSC_LINK") ||
+      getEnv("CSC_NAME") ||
+      getEnv("WIN_CSC_KEY_PASSWORD") ||
+      getEnv("CSC_KEY_PASSWORD")
+  );
+}
+
 const baseBuild = packageJson.build || {};
 const baseWin = baseBuild.win || {};
 const baseMac = baseBuild.mac || {};
 const azureSignOptions = getAzureSignOptions();
+const hasWindowsSigning = hasWindowsSigningConfig() || Boolean(azureSignOptions);
 const numericBuildVersion = getNumericBuildVersion(packageJson.version);
 const displayVersion = formatDisplayVersion(packageJson.version);
 const productName = String(baseBuild.productName || packageJson.productName || packageJson.name || "Note");
@@ -60,7 +72,15 @@ module.exports = {
   win: {
     ...baseWin,
     artifactName: `${productName}-Setup-${displayVersion}-\${arch}.\${ext}`,
-    ...(azureSignOptions ? { azureSignOptions } : {}),
+    ...(azureSignOptions
+      ? { azureSignOptions }
+      : hasWindowsSigning
+        ? {}
+        : {
+            signtoolOptions: {
+              sign: path.join(__dirname, "scripts", "windows-noop-sign.cjs"),
+            },
+          }),
   },
   mac: {
     ...baseMac,
