@@ -544,7 +544,7 @@ export default function NoteList({
                         strokeLinejoin="round"
                       />
                     </svg>
-                    Esporta
+                    Backup
                   </button>
                 </div>
               ) : null}
@@ -847,7 +847,7 @@ export default function NoteList({
                             strokeLinejoin="round"
                           />
                         </svg>
-                        Salva nota .nby
+                        Salva nota
                       </button>
                       <button
                         className="noteMenuItem"
@@ -968,7 +968,7 @@ export default function NoteList({
                   strokeLinejoin="round"
                 />
               </svg>
-              Salva nota .nby
+              Salva nota
             </button>
             <button
               className="noteMenuItem"
