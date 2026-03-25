@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -11,7 +12,7 @@ permissions:
 jobs:
   build-windows:
     name: Build Windows
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
@@ -36,6 +37,14 @@ jobs:
           path: dist-desktop/*.exe
           if-no-files-found: error
 
+      - name: Upload Windows diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-diagnostics
+          path: dist-desktop/**
+          if-no-files-found: warn
+
   build-macos:
     name: Build macOS
     runs-on: macos-13
@@ -57,7 +66,7 @@ jobs:
         run: |
           npm run runtime:env
           npm run build
-          node ./scripts/run-electron-builder.cjs --mac dmg zip --x64
+          node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
@@ -67,6 +76,14 @@ jobs:
             dist-desktop/*.dmg
             dist-desktop/*.zip
           if-no-files-found: error
+
+      - name: Upload macOS diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-diagnostics
+          path: dist-desktop/**
+          if-no-files-found: warn
 
   publish-release:
     name: Publish Release

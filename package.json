@@ -14,15 +14,15 @@
     "installer:assets": "powershell -ExecutionPolicy Bypass -File ./scripts/generate-installer-assets.ps1",
     "desktop:dev": "electron .",
     "desktop:build": "npm run desktop:build:win",
-    "desktop:build:win": "npm run runtime:env && npm run installer:assets && npm run build && node ./scripts/run-electron-builder.cjs --win nsis",
-    "desktop:build:mac": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --mac dmg zip",
-    "desktop:build:mac:universal": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --mac dmg zip --universal",
+    "desktop:build:win": "npm run runtime:env && npm run installer:assets && npm run build && node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --win nsis",
+    "desktop:build:mac": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip",
+    "desktop:build:mac:universal": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --universal",
     "desktop:installer": "npm run desktop:build:win",
     "desktop:release:zip": "powershell -ExecutionPolicy Bypass -File ./scripts/package-release.ps1",
     "desktop:release": "npm run desktop:installer && powershell -ExecutionPolicy Bypass -File ./scripts/package-release.ps1",
     "desktop:release:mac": "npm run desktop:build:mac",
-    "desktop:unpacked": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --win dir",
-    "desktop:portable": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --win portable"
+    "desktop:unpacked": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --win dir",
+    "desktop:portable": "npm run runtime:env && npm run build && node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --win portable"
   },
   "build": {
     "appId": "com.jaco.notes",
