@@ -2,7 +2,7 @@
 
 Le tue note, in una desktop app elegante, veloce e piena di personalita.
 
-`Note di Jaco` e pensata per chi vuole scrivere al volo, organizzare idee, aggiungere stile ai propri appunti e ritrovare tutto in un attimo, senza complicazioni.
+`Note di Jaco` è pensata per chi vuole scrivere al volo, organizzare idee, aggiungere stile ai propri appunti e ritrovare tutto in un attimo, senza complicazioni.
 
 ## Cosa puoi fare
 
