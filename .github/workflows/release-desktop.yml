@@ -31,6 +31,8 @@ jobs:
         shell: pwsh
         run: |
           $cacheRoot = Join-Path $env:LOCALAPPDATA "electron-builder\Cache"
+          $sevenZip = (Resolve-Path ".\node_modules\7zip-bin\win\x64\7za.exe").Path
+
           $winCodeSignRoot = Join-Path $cacheRoot "winCodeSign"
           $targetDir = Join-Path $winCodeSignRoot "winCodeSign-2.6.0"
           $archivePath = Join-Path $winCodeSignRoot "winCodeSign-2.6.0.7z"
@@ -52,6 +54,37 @@ jobs:
             -OutFile $archivePath
 
           & $sevenZip x "-snld" "-bd" $archivePath "-o$targetDir" "-xr!darwin"
+
+          $nsisRoot = Join-Path $cacheRoot "nsis"
+          $nsisTargetDir = Join-Path $nsisRoot "nsis-3.0.4.1-nsis-3.0.4.1"
+          $nsisArchivePath = Join-Path $nsisRoot "nsis-3.0.4.1.7z"
+          $nsisResourcesTargetDir = Join-Path $nsisRoot "nsis-resources-3.4.1-nsis-resources-3.4.1"
+          $nsisResourcesArchivePath = Join-Path $nsisRoot "nsis-resources-3.4.1.7z"
+
+          New-Item -ItemType Directory -Force -Path $nsisRoot | Out-Null
+
+          foreach ($path in @($nsisTargetDir, $nsisResourcesTargetDir)) {
+            if (Test-Path $path) {
+              Remove-Item -Recurse -Force $path
+            }
+          }
+
+          foreach ($path in @($nsisArchivePath, $nsisResourcesArchivePath)) {
+            if (Test-Path $path) {
+              Remove-Item -Force $path
+            }
+          }
+
+          Invoke-WebRequest `
+            -Uri "https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-3.0.4.1/nsis-3.0.4.1.7z" `
+            -OutFile $nsisArchivePath
+
+          Invoke-WebRequest `
+            -Uri "https://github.com/electron-userland/electron-builder-binaries/releases/download/nsis-resources-3.4.1/nsis-resources-3.4.1.7z" `
+            -OutFile $nsisResourcesArchivePath
+
+          & $sevenZip x "-snld" "-bd" $nsisArchivePath "-o$nsisTargetDir"
+          & $sevenZip x "-snld" "-bd" $nsisResourcesArchivePath "-o$nsisResourcesTargetDir"
 
       - name: Sync runtime env
         run: npm run runtime:env
