@@ -1,8 +1,8 @@
-# Note di Jaco
+# Note by Jaco
 
-Le tue note, in una desktop app elegante, veloce e piena di personalita.
+Le tue note, in una desktop app elegante, veloce e piena di personalità.
 
-`Note di Jaco` è pensata per chi vuole scrivere al volo, organizzare idee, aggiungere stile ai propri appunti e ritrovare tutto in un attimo, senza complicazioni.
+`Note by Jaco` è pensata per chi vuole scrivere al volo, organizzare idee, aggiungere stile ai propri appunti e ritrovare tutto in un attimo, senza complicazioni.
 
 ## Cosa puoi fare
 
@@ -45,7 +45,7 @@ Le tue note, in una desktop app elegante, veloce e piena di personalita.
 
 ### Tenere tutto sincronizzato
 - sync cloud opzionale
-- stessa chiave privata su piu dispositivi
+- stessa chiave privata su più dispositivi
 - funziona anche offline senza cloud
 
 ## Installazione
@@ -54,7 +54,7 @@ Le tue note, in una desktop app elegante, veloce e piena di personalita.
 1. Apri la sezione `Releases` del repository.
 2. Scarica l'ultima versione per Windows.
 3. Estrai lo zip, se presente.
-4. Avvia `Installer.exe`.
+4. Avvia il file `.exe` scaricato.
 5. Completa l'installazione e apri l'app.
 
 ### macOS
@@ -66,13 +66,13 @@ Le tue note, in una desktop app elegante, veloce e piena di personalita.
 
 Se al primo avvio macOS mostra un avviso di sicurezza, apri `Impostazioni di Sistema > Privacy e Sicurezza` e scegli `Apri comunque`.
 
-## Perche usarla
+## Perché usarla
 
-- e veloce da aprire e immediata da capire
+- è veloce da aprire e immediata da capire
 - resta piacevole anche con tante note
 - unisce editor ricco e organizzazione semplice
 - ti permette di salvare una singola nota come file dedicato
-- e pensata per uso quotidiano, personale e creativo
+- è pensata per uso quotidiano, personale e creativo
 
 ## Download
 
