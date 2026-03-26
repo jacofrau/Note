@@ -19,6 +19,7 @@ const DEV_SERVER_PROBE_INTERVAL_MS = 250;
 const NOTE_FILE_EXTENSION = ".nby";
 const NOTE_FILE_PROG_ID = "NoteDiJaco.NoteFile";
 const NOTE_FILE_DESCRIPTION = "Nota Note by Jaco";
+const APP_SETTINGS_STORAGE_KEY = "note_di_jaco_app_settings_v1";
 
 let mainWindow = null;
 let server = null;
@@ -309,8 +310,58 @@ function logDesktop(...parts) {
   }
 }
 
-function getIconPath() {
-  return path.join(app.getAppPath(), "public", "icons", "notedijaco_icon.png");
+function normalizeAppTheme(value) {
+  return value === "blue" || value === "pink" || value === "red" ? value : "dark";
+}
+
+function getStoredAppTheme() {
+  const settings = getDesktopStorageValue(APP_SETTINGS_STORAGE_KEY);
+  if (!settings || typeof settings !== "object" || Array.isArray(settings)) {
+    return "dark";
+  }
+
+  return normalizeAppTheme(settings.theme);
+}
+
+function getWindowBackgroundColor(theme = "dark") {
+  if (theme === "blue") return "#060a14";
+  if (theme === "pink") return "#10070a";
+  if (theme === "red") return "#100607";
+  return "#0f0914";
+}
+
+function getIconPath(theme = "dark") {
+  const isWindows = process.platform === "win32";
+  const iconFileName = isWindows
+    ? theme === "blue"
+      ? "notedijaco_blueicon.ico"
+      : theme === "green"
+        ? "notedijaco_greenicon.ico"
+        : theme === "yellow"
+          ? "notedijaco_yellowicon.ico"
+      : theme === "pink"
+        ? "notedijaco_pinkicon.ico"
+        : theme === "red"
+          ? "notedijaco_rediconfix.ico"
+        : "notedijaco_icon.ico"
+    : theme === "blue"
+      ? "notedijaco_blueicon.png"
+      : theme === "green"
+        ? "notedijaco_greenicon.png"
+        : theme === "yellow"
+          ? "notedijaco_yellowicon.png"
+      : theme === "pink"
+        ? "notedijaco_pinkicon.png"
+        : theme === "red"
+          ? "notedijaco_rediconfix.png"
+        : "notedijaco_icon.png";
+
+  return path.join(
+    app.getAppPath(),
+    "public",
+    "icons",
+    iconFileName,
+  );
 }
 
 function focusMainWindow() {
@@ -474,15 +525,16 @@ async function startNextServer() {
 }
 
 function createPreviewWindow(pdfPath) {
+  const appTheme = getStoredAppTheme();
   const previewWindow = new BrowserWindow({
     width: 980,
     height: 760,
     minWidth: 760,
     minHeight: 560,
     autoHideMenuBar: true,
-    backgroundColor: "#0f0f14",
+    backgroundColor: getWindowBackgroundColor(appTheme),
     title: "Anteprima di stampa",
-    icon: getIconPath(),
+    icon: getIconPath(appTheme),
     parent: mainWindow || undefined,
     webPreferences: {
       contextIsolation: true,
@@ -527,15 +579,16 @@ async function openPrintPreview() {
 async function createWindow() {
   logDesktop("createWindow", { isDev });
   let allowMainWindowClose = false;
+  const appTheme = getStoredAppTheme();
   mainWindow = new BrowserWindow({
     width: 1480,
     height: 960,
     minWidth: 1260,
     minHeight: 720,
     autoHideMenuBar: true,
-    backgroundColor: "#0b0b10",
+    backgroundColor: getWindowBackgroundColor(appTheme),
     title: "Note di Jaco",
-    icon: getIconPath(),
+    icon: getIconPath(appTheme),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,

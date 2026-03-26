@@ -6,7 +6,7 @@ on:
       tag:
         description: Existing release tag to attach macOS assets to
         required: true
-        default: v1.0.4-beta.0
+        default: v1.0.5-beta.0
 
 permissions:
   contents: write

@@ -4,6 +4,7 @@ import type { RefObject } from "react";
 import { DesignModeIcon, ThemePaletteIcon } from "@/components/AppIcons";
 import DesignModeOption from "@/components/DesignModeOption";
 import DialogOverlay from "@/components/dialogs/DialogOverlay";
+import { APP_THEME_OPTIONS } from "@/lib/appSettings";
 import type { DesignMode } from "@/lib/designMode";
 import { NotesTagIcon } from "@/lib/tagDefinitions";
 import type { AppTheme } from "@/lib/appSettings";
@@ -94,19 +95,21 @@ export default function OnboardingDialog({
             <span>Tema</span>
           </span>
           <div className="settingsThemeGrid" role="radiogroup" aria-label="Tema app">
-            <button
-              className={"settingsThemeOption" + (themeValue === "dark" ? " active" : "")}
-              type="button"
-              role="radio"
-              aria-checked={themeValue === "dark"}
-              onClick={() => onThemeChange("dark")}
-            >
-              <span className="settingsThemeSwatch settingsThemeSwatchDark" aria-hidden="true" />
-              <span className="settingsThemeOptionText">
-                <span className="settingsThemeOptionTitle">Scuro</span>
-                <span className="settingsThemeOptionMeta">Tema attuale dell&apos;app</span>
-              </span>
-            </button>
+            {APP_THEME_OPTIONS.map((themeOption) => (
+              <button
+                key={themeOption.value}
+                className={"settingsThemeOption" + (themeValue === themeOption.value ? " active" : "")}
+                type="button"
+                role="radio"
+                data-theme={themeOption.value}
+                aria-checked={themeValue === themeOption.value}
+                aria-label={themeOption.label}
+                title={themeOption.label}
+                onClick={() => onThemeChange(themeOption.value)}
+              >
+                <span className="settingsThemeSwatch" data-theme={themeOption.value} aria-hidden="true" />
+              </button>
+            ))}
           </div>
         </div>
         <div className="tagManageHint">Potrai cambiare nome, design e tema in qualsiasi momento dalle impostazioni.</div>

@@ -441,6 +441,7 @@ function createWelcomeNotes(): Note[] {
       createdAt: timestamp,
       updatedAt: timestamp,
       pinned: true,
+      pinnedAt: timestamp,
       archived: false,
       tag: "tutorial",
     },
@@ -466,6 +467,8 @@ function normalizeSingleNote(value: unknown, fallbackIndex = 0): Note {
   const id = typeof raw?.id === "string" && raw.id.trim() ? raw.id : `note-${now}-${fallbackIndex}`;
   const createdAt = typeof raw?.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : now;
   const updatedAt = typeof raw?.updatedAt === "number" && Number.isFinite(raw.updatedAt) ? raw.updatedAt : createdAt;
+  const pinned = !!raw?.pinned;
+  const pinnedAt = typeof raw?.pinnedAt === "number" && Number.isFinite(raw.pinnedAt) ? raw.pinnedAt : undefined;
 
   return {
     id,
@@ -473,7 +476,8 @@ function normalizeSingleNote(value: unknown, fallbackIndex = 0): Note {
     doc: raw?.doc && typeof raw.doc === "object" ? raw.doc : emptyDoc(),
     createdAt,
     updatedAt,
-    pinned: !!raw?.pinned,
+    pinned,
+    pinnedAt: pinned ? pinnedAt : undefined,
     archived: !!raw?.archived,
     tag: normalizeTagValue(raw?.tag),
   };
@@ -484,11 +488,16 @@ export function normalizeNotesData(value: unknown): Note[] {
 
   const seen = new Set<string>();
   const normalized: Note[] = [];
+  let migratedPinnedOrder = 0;
 
   value.forEach((entry, index) => {
     const note = normalizeSingleNote(entry, index);
     if (seen.has(note.id)) return;
     seen.add(note.id);
+    if (note.pinned && typeof note.pinnedAt !== "number") {
+      migratedPinnedOrder += 1;
+      note.pinnedAt = migratedPinnedOrder;
+    }
     normalized.push(note);
   });
 
@@ -817,10 +826,33 @@ export async function saveStickerPacks(packs: StickerPack[]): Promise<void> {
 }
 
 export function sortNotes(notes: Note[]): Note[] {
-  return [...notes].sort((a, b) => {
+  let nextPinnedAt = 1;
+  const notesWithPinnedOrder = notes.map((note) => {
+    if (!note.pinned) {
+      return typeof note.pinnedAt === "number" ? { ...note, pinnedAt: undefined } : note;
+    }
+
+    const pinnedAt = nextPinnedAt;
+    nextPinnedAt += 1;
+
+    return note.pinnedAt === pinnedAt ? note : { ...note, pinnedAt };
+  });
+
+  return [...notesWithPinnedOrder].sort((a, b) => {
     const ap = a.pinned ? 1 : 0;
     const bp = b.pinned ? 1 : 0;
     if (ap !== bp) return bp - ap;
-    return (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    if (ap === 1 && bp === 1) {
+      const aPinnedAt =
+        typeof a.pinnedAt === "number" && Number.isFinite(a.pinnedAt) ? a.pinnedAt : Number.MAX_SAFE_INTEGER;
+      const bPinnedAt =
+        typeof b.pinnedAt === "number" && Number.isFinite(b.pinnedAt) ? b.pinnedAt : Number.MAX_SAFE_INTEGER;
+      if (aPinnedAt !== bPinnedAt) return aPinnedAt - bPinnedAt;
+    }
+    const updatedDiff = (b.updatedAt ?? 0) - (a.updatedAt ?? 0);
+    if (updatedDiff !== 0) return updatedDiff;
+    const createdDiff = (b.createdAt ?? 0) - (a.createdAt ?? 0);
+    if (createdDiff !== 0) return createdDiff;
+    return a.id.localeCompare(b.id, "it-IT", { sensitivity: "base" });
   });
 }

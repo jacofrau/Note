@@ -1,5 +1,6 @@
 "use client";
 
+import { InstagramIcon } from "@/components/AppIcons";
 import type { ReactNode } from "react";
 
 type TagIconProps = {
@@ -209,6 +210,10 @@ const TAG_DEFINITIONS: TagDefinition[] = [
   {
     terms: ["dev", "development", "programming", "coding", "code", "codes"],
     renderIcon: (props) => <DevTagIcon {...props} />,
+  },
+  {
+    terms: ["insta", "instagram"],
+    renderIcon: (props) => <InstagramIcon {...props} />,
   },
 ];
 

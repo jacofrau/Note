@@ -9,6 +9,7 @@ export type Note = {
   createdAt: number;
   updatedAt: number;
   pinned?: boolean;
+  pinnedAt?: number;
   archived?: boolean;
   tag?: string;
 };

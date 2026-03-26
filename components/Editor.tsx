@@ -943,6 +943,7 @@ type EditorProps = {
   noteId: string;
   doc: NoteDoc;
   lastUpdatedAt: number;
+  showColoredTextHighlights: boolean;
   moveCompletedChecklistItemsToBottom: boolean;
   showMathResultsPreview: boolean;
   onChangeDoc: (d: NoteDoc) => void;
@@ -1075,6 +1076,7 @@ export default function Editor({
   noteId,
   doc,
   lastUpdatedAt,
+  showColoredTextHighlights,
   moveCompletedChecklistItemsToBottom,
   showMathResultsPreview,
   onChangeDoc,
@@ -1218,6 +1220,11 @@ export default function Editor({
     if (!editor) return;
     editor.view.dispatch(editor.state.tr.setMeta("math-result-preview-refresh", true));
   }, [editor, showMathResultsPreview, noteId]);
+
+  useEffect(() => {
+    if (!editor) return;
+    editor.view.dom.classList.toggle("tiptapTextHighlightEnabled", showColoredTextHighlights);
+  }, [editor, showColoredTextHighlights]);
 
   useEffect(() => {
     if (!editor || !onInsertCustomEmoji) return;

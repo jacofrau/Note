@@ -11,12 +11,20 @@ const noStoreHeaders = {
 const feedbackRecipient = process.env.FEEDBACK_EMAIL_TO?.trim() || "jacopo.frau04@gmail.com";
 const openAiApiKey = process.env.OPENAI_API_KEY?.trim() || "";
 const openAiModerationModel = process.env.OPENAI_FEEDBACK_MODERATION_MODEL?.trim() || "omni-moderation-latest";
+const MAX_FEEDBACK_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
 type FeedbackPayload = {
   designMode: string;
   message: string;
   userName: string;
   version: string;
+};
+
+type FeedbackAttachment = {
+  content: Buffer;
+  contentType: string;
+  fileName: string;
+  size: number;
 };
 
 type FeedbackReviewDecision = {
@@ -44,6 +52,74 @@ function normalizePayload(value: unknown): FeedbackPayload {
     message: normalizeString(candidate.message, 4000),
     userName: normalizeString(candidate.userName, 64),
     version: normalizeString(candidate.version, 32),
+  };
+}
+
+function normalizeFormString(value: FormDataEntryValue | null, maxLength: number): string {
+  if (typeof value !== "string") return "";
+  return value.trim().slice(0, maxLength);
+}
+
+function normalizePayloadFromFormData(formData: FormData): FeedbackPayload {
+  return {
+    designMode: normalizeFormString(formData.get("designMode"), 32),
+    message: normalizeFormString(formData.get("message"), 4000),
+    userName: normalizeFormString(formData.get("userName"), 64),
+    version: normalizeFormString(formData.get("version"), 32),
+  };
+}
+
+function normalizeAttachmentFileName(value: string) {
+  const normalized = value.replace(/[^\p{L}\p{N}._() -]+/gu, "_").trim().slice(0, 120);
+  return normalized || `screenshot-${Date.now()}.png`;
+}
+
+async function parseAttachment(value: FormDataEntryValue | null): Promise<FeedbackAttachment | null> {
+  if (!(value instanceof File)) {
+    return null;
+  }
+
+  if (!value.size) {
+    return null;
+  }
+
+  const looksLikeImage =
+    value.type.startsWith("image/") ||
+    /\.(png|jpe?g|webp|gif|bmp|svg|avif|heic|heif)$/iu.test(value.name);
+
+  if (!looksLikeImage) {
+    throw new Error("invalid-attachment-type");
+  }
+
+  if (value.size > MAX_FEEDBACK_ATTACHMENT_SIZE) {
+    throw new Error("attachment-too-large");
+  }
+
+  return {
+    content: Buffer.from(await value.arrayBuffer()),
+    contentType: value.type || "application/octet-stream",
+    fileName: normalizeAttachmentFileName(value.name),
+    size: value.size,
+  };
+}
+
+async function parseRequestPayload(request: Request): Promise<{ attachment: FeedbackAttachment | null; payload: FeedbackPayload }> {
+  const contentType = request.headers.get("content-type") || "";
+
+  if (contentType.includes("multipart/form-data")) {
+    const formData = await request.formData();
+
+    return {
+      attachment: await parseAttachment(formData.get("screenshot")),
+      payload: normalizePayloadFromFormData(formData),
+    };
+  }
+
+  const body = await request.json().catch(() => null);
+
+  return {
+    attachment: null,
+    payload: normalizePayload(body),
   };
 }
 
@@ -176,8 +252,33 @@ export async function POST(request: Request) {
     );
   }
 
-  const body = await request.json().catch(() => null);
-  const payload = normalizePayload(body);
+  let payload: FeedbackPayload;
+  let attachment: FeedbackAttachment | null;
+
+  try {
+    const parsed = await parseRequestPayload(request);
+    payload = parsed.payload;
+    attachment = parsed.attachment;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : "";
+    const message =
+      reason === "attachment-too-large"
+        ? "Lo screenshot supera 10 MB. Scegli un'immagine piu leggera."
+        : reason === "invalid-attachment-type"
+          ? "Puoi allegare solo immagini."
+          : "Formato feedback non valido.";
+
+    return NextResponse.json(
+      {
+        error: message,
+        ok: false,
+      },
+      {
+        headers: noStoreHeaders,
+        status: 400,
+      },
+    );
+  }
 
   if (!payload.message) {
     return NextResponse.json(
@@ -218,7 +319,8 @@ export async function POST(request: Request) {
     `App: Note`,
     `Versione: ${payload.version || "non disponibile"}`,
     `Design: ${formatDesignModeLabel(payload.designMode)}`,
-    `Nome app: ${payload.userName || "non impostato"}`,
+    `Nome scelto nell'app: ${payload.userName || "non impostato"}`,
+    `Screenshot allegato: ${attachment ? `${attachment.fileName} (${attachment.contentType})` : "nessuno"}`,
     `Inviato il: ${sentAt.toISOString()}`,
   ].join("\n");
   const html = `
@@ -229,7 +331,10 @@ export async function POST(request: Request) {
       <p style="margin:4px 0"><strong>App:</strong> Note</p>
       <p style="margin:4px 0"><strong>Versione:</strong> ${escapeHtml(payload.version || "non disponibile")}</p>
       <p style="margin:4px 0"><strong>Design:</strong> ${escapeHtml(formatDesignModeLabel(payload.designMode))}</p>
-      <p style="margin:4px 0"><strong>Nome app:</strong> ${escapeHtml(payload.userName || "non impostato")}</p>
+      <p style="margin:4px 0"><strong>Nome scelto nell'app:</strong> ${escapeHtml(payload.userName || "non impostato")}</p>
+      <p style="margin:4px 0"><strong>Screenshot allegato:</strong> ${escapeHtml(
+        attachment ? `${attachment.fileName} (${attachment.contentType})` : "nessuno",
+      )}</p>
       <p style="margin:4px 0"><strong>Inviato il:</strong> ${escapeHtml(sentAt.toISOString())}</p>
     </div>
   `;
@@ -244,7 +349,16 @@ export async function POST(request: Request) {
 
     await transporter.sendMail({
       from: config.from,
-      subject: "Note - Suggerimento/Feedback",
+      attachments: attachment
+        ? [
+            {
+              content: attachment.content,
+              contentType: attachment.contentType,
+              filename: attachment.fileName,
+            },
+          ]
+        : undefined,
+      subject: payload.userName ? `Note - Feedback da ${payload.userName}` : "Note - Suggerimento/Feedback",
       text,
       html,
       to: feedbackRecipient,

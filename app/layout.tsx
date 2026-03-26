@@ -1,10 +1,10 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
-import { APP_SETTINGS_INIT_SCRIPT, DEFAULT_APP_SETTINGS } from "@/lib/appSettings";
+import { APP_SETTINGS_INIT_SCRIPT, DEFAULT_APP_SETTINGS, getAppThemeColor, getAppThemeIconPath } from "@/lib/appSettings";
 import { DEFAULT_DESIGN_MODE, DESIGN_MODE_INIT_SCRIPT } from "@/lib/designMode";
 
-const appIconPath = "/icons/notedijaco_icon.png?v=20260303-234200";
+const appIconPath = getAppThemeIconPath(DEFAULT_APP_SETTINGS.theme);
 const sfProDisplay = localFont({
   src: [
     {
@@ -36,7 +36,7 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0b0b10",
+  themeColor: getAppThemeColor(DEFAULT_APP_SETTINGS.theme),
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

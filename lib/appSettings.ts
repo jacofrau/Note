@@ -4,12 +4,40 @@ import {
   setDesktopStoredValueSync,
 } from "./desktopBridge";
 
-export type AppTheme = "dark";
+export type AppTheme = "dark" | "blue" | "pink" | "red" | "green" | "yellow";
+
+export const APP_THEME_OPTIONS: ReadonlyArray<{ label: string; value: AppTheme }> = [
+  { label: "Viola", value: "dark" },
+  { label: "Blu", value: "blue" },
+  { label: "Verde scuro", value: "green" },
+  { label: "Giallo", value: "yellow" },
+  { label: "Rosa", value: "pink" },
+  { label: "Rosso", value: "red" },
+];
+
+export const APP_THEME_ICON_PATHS: Record<AppTheme, string> = {
+  dark: "/icons/notedijaco_icon.png?v=20260303-234200",
+  blue: "/icons/notedijaco_blueicon.png?v=20260327-000700",
+  pink: "/icons/notedijaco_pinkicon.png?v=20260327-001900",
+  red: "/icons/notedijaco_rediconfix.png?v=20260327-003200",
+  green: "/icons/notedijaco_greenicon.png?v=20260326-233449",
+  yellow: "/icons/notedijaco_yellowicon.png?v=20260326-233703",
+};
+
+export const APP_THEME_COLORS: Record<AppTheme, string> = {
+  dark: "#0f0914",
+  blue: "#060a14",
+  pink: "#10070a",
+  red: "#100607",
+  green: "#06110c",
+  yellow: "#141005",
+};
 
 export type AppSettings = {
   userName: string;
   theme: AppTheme;
   hasCompletedOnboarding: boolean;
+  showColoredTextHighlights: boolean;
   moveCompletedChecklistItemsToBottom: boolean;
   showMathResultsPreview: boolean;
   showPersistentDesignSwitcher: boolean;
@@ -19,6 +47,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   userName: "",
   theme: "dark",
   hasCompletedOnboarding: false,
+  showColoredTextHighlights: true,
   moveCompletedChecklistItemsToBottom: false,
   showMathResultsPreview: true,
   showPersistentDesignSwitcher: false,
@@ -33,6 +62,7 @@ function areAppSettingsEqual(left: AppSettings, right: AppSettings): boolean {
     left.userName === right.userName &&
     left.theme === right.theme &&
     left.hasCompletedOnboarding === right.hasCompletedOnboarding &&
+    left.showColoredTextHighlights === right.showColoredTextHighlights &&
     left.moveCompletedChecklistItemsToBottom === right.moveCompletedChecklistItemsToBottom &&
     left.showMathResultsPreview === right.showMathResultsPreview &&
     left.showPersistentDesignSwitcher === right.showPersistentDesignSwitcher
@@ -49,7 +79,9 @@ function cacheAppSettingsSnapshot(value: AppSettings): AppSettings {
 }
 
 export function normalizeAppTheme(value: unknown): AppTheme {
-  return value === "dark" ? "dark" : DEFAULT_APP_SETTINGS.theme;
+  return value === "blue" || value === "pink" || value === "red" || value === "green" || value === "yellow" || value === "dark"
+    ? value
+    : DEFAULT_APP_SETTINGS.theme;
 }
 
 export function normalizeAppUserName(value: unknown): string {
@@ -70,6 +102,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.hasCompletedOnboarding === "boolean"
         ? candidate.hasCompletedOnboarding
         : hasLegacyStoredSettings,
+    showColoredTextHighlights:
+      typeof candidate.showColoredTextHighlights === "boolean"
+        ? candidate.showColoredTextHighlights
+        : DEFAULT_APP_SETTINGS.showColoredTextHighlights,
     moveCompletedChecklistItemsToBottom:
       typeof candidate.moveCompletedChecklistItemsToBottom === "boolean"
         ? candidate.moveCompletedChecklistItemsToBottom
@@ -88,6 +124,14 @@ export function normalizeAppSettings(value: unknown): AppSettings {
 export function formatAppDisplayName(userName: string): string {
   const normalized = normalizeAppUserName(userName);
   return normalized ? `Note di ${normalized}` : "Note";
+}
+
+export function getAppThemeIconPath(theme: AppTheme): string {
+  return APP_THEME_ICON_PATHS[normalizeAppTheme(theme)];
+}
+
+export function getAppThemeColor(theme: AppTheme): string {
+  return APP_THEME_COLORS[normalizeAppTheme(theme)];
 }
 
 function writeDocumentSettings(settings: AppSettings) {
@@ -177,6 +221,8 @@ export function setDocumentAppSettings(value: AppSettings): AppSettings {
 export const APP_SETTINGS_INIT_SCRIPT = `
   try {
     const defaults = ${JSON.stringify(DEFAULT_APP_SETTINGS)};
+    const iconPaths = ${JSON.stringify(APP_THEME_ICON_PATHS)};
+    const themeColors = ${JSON.stringify(APP_THEME_COLORS)};
     const desktopStorage = window.noteDiJacoDesktop?.storage;
     const desktopStored = desktopStorage?.getItemSync("${APP_SETTINGS_STORAGE_KEY}");
     const rawSettings =
@@ -193,13 +239,25 @@ export const APP_SETTINGS_INIT_SCRIPT = `
       typeof parsed?.userName === "string"
         ? parsed.userName.replace(/\\s+/g, " ").trim().slice(0, 24)
         : defaults.userName;
-    const theme = parsed?.theme === "dark" ? "dark" : defaults.theme;
+    const theme =
+      parsed?.theme === "blue" ||
+      parsed?.theme === "pink" ||
+      parsed?.theme === "red" ||
+      parsed?.theme === "green" ||
+      parsed?.theme === "yellow" ||
+      parsed?.theme === "dark"
+        ? parsed.theme
+        : defaults.theme;
     const hasLegacyStoredSettings =
       typeof parsed === "object" && parsed !== null && ("userName" in parsed || "theme" in parsed);
     const hasCompletedOnboarding =
       typeof parsed?.hasCompletedOnboarding === "boolean"
         ? parsed.hasCompletedOnboarding
         : hasLegacyStoredSettings;
+    const showColoredTextHighlights =
+      typeof parsed?.showColoredTextHighlights === "boolean"
+        ? parsed.showColoredTextHighlights
+        : defaults.showColoredTextHighlights;
     const moveCompletedChecklistItemsToBottom =
       typeof parsed?.moveCompletedChecklistItemsToBottom === "boolean"
         ? parsed.moveCompletedChecklistItemsToBottom
@@ -216,6 +274,7 @@ export const APP_SETTINGS_INIT_SCRIPT = `
       userName,
       theme,
       hasCompletedOnboarding,
+      showColoredTextHighlights,
       moveCompletedChecklistItemsToBottom,
       showMathResultsPreview,
       showPersistentDesignSwitcher,
@@ -226,6 +285,23 @@ export const APP_SETTINGS_INIT_SCRIPT = `
     document.documentElement.dataset.appTheme = theme;
     document.documentElement.dataset.appOnboardingComplete = hasCompletedOnboarding ? "true" : "false";
     document.documentElement.dataset.appSettings = encodeURIComponent(JSON.stringify(normalized));
+    const nextIconPath = iconPaths[theme] || iconPaths.dark;
+    const nextThemeColor = themeColors[theme] || themeColors.dark;
+    const iconLinks = Array.from(document.querySelectorAll('link[rel~="icon"]'));
+    if (iconLinks.length === 0) {
+      const link = document.createElement("link");
+      link.rel = "icon";
+      link.href = nextIconPath;
+      document.head.appendChild(link);
+    } else {
+      for (const link of iconLinks) {
+        link.href = nextIconPath;
+      }
+    }
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute("content", nextThemeColor);
+    }
   } catch {
     const defaults = ${JSON.stringify(DEFAULT_APP_SETTINGS)};
     document.documentElement.dataset.appTheme = defaults.theme;

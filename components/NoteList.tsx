@@ -909,6 +909,12 @@ export default function NoteList({
               </div>
             );
           })}
+          {notes.length === 0 && !trimmedQuery && selectedTag ? (
+            <div className="muted noteListEmptyState">
+              {`Nessuna nota nel tag "${selectedTag}"`}
+            </div>
+          ) : null}
+          <div className="noteListFiller" aria-hidden="true" />
         </OverlayScrollArea>
         {usesContextMenu && contextMenuState ? (
           <div
@@ -1011,11 +1017,6 @@ export default function NoteList({
               </svg>
               Elimina
             </button>
-          </div>
-        ) : null}
-        {notes.length === 0 && !trimmedQuery && selectedTag ? (
-          <div className="muted noteListEmptyState">
-            {`Nessuna nota nel tag "${selectedTag}"`}
           </div>
         ) : null}
       </div>

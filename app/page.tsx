@@ -1,10 +1,10 @@
-"use client";
+﻿"use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { nanoid } from "nanoid";
 import packageJson from "../package.json";
-import { DesignModeIcon, TagLabelIcon, ThemePaletteIcon } from "@/components/AppIcons";
+import { DesignModeIcon, InstagramIcon, TagLabelIcon, ThemePaletteIcon } from "@/components/AppIcons";
 import DesignModeOption from "@/components/DesignModeOption";
 import DeleteConfirmDialog from "@/components/dialogs/DeleteConfirmDialog";
 import OnboardingDialog from "@/components/dialogs/OnboardingDialog";
@@ -34,7 +34,10 @@ import {
   getNoteTitleSearchTextFromDoc as titleSearchFromDoc,
 } from "@/lib/noteText";
 import {
+  APP_THEME_OPTIONS,
   DEFAULT_APP_SETTINGS,
+  getAppThemeColor,
+  getAppThemeIconPath,
   getDocumentAppSettings,
   getStoredAppSettings,
   normalizeAppUserName,
@@ -74,6 +77,8 @@ const appVersion = packageJson.version || "1.0.0";
 const cloudSyncEnabled = isCloudSyncEnabledClient();
 const updateManifestUrl = process.env.NEXT_PUBLIC_UPDATE_MANIFEST_URL?.trim() || "/api/app-release";
 const SAVE_DEBOUNCE_MS = 220;
+const MAX_PINNED_NOTES = 3;
+const MAX_FEEDBACK_ATTACHMENT_SIZE = 10 * 1024 * 1024;
 
 const Editor = dynamic(() => import("@/components/Editor"), {
   ssr: false,
@@ -111,6 +116,10 @@ type SettingsDialogTab = "notes" | "design" | "user";
 type SpecialAppBrandIcon = {
   imageClassName?: string;
   src: string;
+};
+type FeedbackRequestResponse = {
+  error?: string;
+  ok?: boolean;
 };
 
 function getSpecialAppBrandIcon(userName: string): SpecialAppBrandIcon | null {
@@ -272,6 +281,10 @@ function ChecklistSettingsIcon() {
   );
 }
 
+function TextHighlightSettingsIcon() {
+  return <span className="settingsHighlightIcon" aria-hidden="true" />;
+}
+
 function MathResultsIcon() {
   return (
     <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -311,6 +324,20 @@ function FeedbackIcon() {
   );
 }
 
+function FeedbackAttachmentIcon() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M14.264 15.938L12.596 14.283C11.791 13.485 11.388 13.086 10.927 12.94C10.52 12.812 10.084 12.817 9.68 12.954C9.222 13.11 8.828 13.517 8.041 14.333L4.044 18.28M14.264 15.938L14.605 15.599C15.411 14.8 15.814 14.4 16.277 14.254C16.683 14.126 17.12 14.131 17.524 14.269C17.982 14.425 18.376 14.834 19.163 15.651L20 16.493M14.264 15.938L18.275 19.957M18.275 19.957C17.918 20 17.454 20 16.8 20H7.2C6.08 20 5.52 20 5.092 19.782C4.716 19.59 4.41 19.284 4.218 18.908C4.128 18.731 4.075 18.532 4.044 18.28M18.275 19.957C18.529 19.926 18.73 19.873 18.908 19.782C19.284 19.59 19.59 19.284 19.782 18.908C20 18.48 20 17.92 20 16.8V16.493M4.044 18.28C4 17.922 4 17.458 4 16.8V7.2C4 6.08 4 5.52 4.218 5.092C4.41 4.716 4.716 4.41 5.092 4.218C5.52 4 6.08 4 7.2 4H16.8C17.92 4 18.48 4 18.908 4.218C19.284 4.41 19.59 4.716 19.782 5.092C20 5.52 20 6.08 20 7.2V16.493M17 9C17 10.104 16.105 11 15 11C13.895 11 13 10.104 13 9C13 7.895 13.895 7 15 7C16.105 7 17 7.895 17 9Z"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export default function Home() {
   const [notes, setNotes] = useState<Note[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -343,11 +370,18 @@ export default function Home() {
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
   const [cloudKeyValue, setCloudKeyValue] = useState("");
   const [feedbackValue, setFeedbackValue] = useState("");
+  const [feedbackAttachment, setFeedbackAttachment] = useState<File | null>(null);
+  const [isFeedbackDropTarget, setIsFeedbackDropTarget] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<{ kind: "error" | "success"; text: string } | null>(null);
+  const [pinLimitNotice, setPinLimitNotice] = useState<string | null>(null);
+  const [pinLimitNoticePhase, setPinLimitNoticePhase] = useState<"enter" | "leave">("enter");
   const [settingsNameValue, setSettingsNameValue] = useState("");
   const [settingsThemeValue, setSettingsThemeValue] = useState<AppTheme>(DEFAULT_APP_SETTINGS.theme);
   const [settingsDesignValue, setSettingsDesignValue] = useState<DesignMode>(DEFAULT_DESIGN_MODE);
   const [settingsActiveTab, setSettingsActiveTab] = useState<SettingsDialogTab>("notes");
+  const [settingsShowColoredTextHighlightsValue, setSettingsShowColoredTextHighlightsValue] = useState(
+    DEFAULT_APP_SETTINGS.showColoredTextHighlights,
+  );
   const [settingsMoveCompletedChecklistItemsToBottomValue, setSettingsMoveCompletedChecklistItemsToBottomValue] = useState(
     DEFAULT_APP_SETTINGS.moveCompletedChecklistItemsToBottom,
   );
@@ -367,9 +401,13 @@ export default function Home() {
   const pendingNoteFilePayloadsRef = useRef<DesktopOpenNoteFilePayload[]>([]);
   const isProcessingPendingNoteFilesRef = useRef(false);
   const hasLoadedNotesRef = useRef(false);
+  const pinLimitNoticeHideTimeoutRef = useRef<number | null>(null);
+  const pinLimitNoticeClearTimeoutRef = useRef<number | null>(null);
   const tagDialogInputRef = useRef<HTMLInputElement | null>(null);
   const cloudKeyInputRef = useRef<HTMLInputElement | null>(null);
   const feedbackTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const feedbackFileInputRef = useRef<HTMLInputElement | null>(null);
+  const feedbackDropDepthRef = useRef(0);
   const settingsInputRef = useRef<HTMLInputElement | null>(null);
   const onboardingInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -470,6 +508,7 @@ export default function Home() {
   const appDisplayName = "Note";
   const headerAppDisplayName = hasCustomAppUserName ? `Note di ${normalizedAppUserName}` : "Note";
   const specialAppBrandIcon = useMemo(() => getSpecialAppBrandIcon(normalizedAppUserName), [normalizedAppUserName]);
+  const themeAppIconPath = useMemo(() => getAppThemeIconPath(appSettings.theme), [appSettings.theme]);
   const isOnboardingDialogOpen = !appSettings.hasCompletedOnboarding;
 
   useEffect(() => {
@@ -482,6 +521,28 @@ export default function Home() {
     setOnboardingThemeValue(storedSettings.theme);
     setOnboardingDesignValue(storedDesignMode);
   }, [isOnboardingDialogOpen]);
+
+  useEffect(() => {
+    const nextIconPath = getAppThemeIconPath(appSettings.theme);
+    const nextThemeColor = getAppThemeColor(appSettings.theme);
+    const iconLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'));
+
+    if (iconLinks.length === 0) {
+      const link = document.createElement("link");
+      link.rel = "icon";
+      link.href = nextIconPath;
+      document.head.appendChild(link);
+    } else {
+      for (const link of iconLinks) {
+        link.href = nextIconPath;
+      }
+    }
+
+    const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute("content", nextThemeColor);
+    }
+  }, [appSettings.theme]);
 
   useEffect(() => {
     if (!updateManifestUrl) return;
@@ -665,6 +726,37 @@ export default function Home() {
     };
   }, [activeNoteId, notes, performPrint]);
 
+  const clearPinLimitNoticeTimers = useCallback(() => {
+    if (pinLimitNoticeHideTimeoutRef.current) {
+      window.clearTimeout(pinLimitNoticeHideTimeoutRef.current);
+      pinLimitNoticeHideTimeoutRef.current = null;
+    }
+    if (pinLimitNoticeClearTimeoutRef.current) {
+      window.clearTimeout(pinLimitNoticeClearTimeoutRef.current);
+      pinLimitNoticeClearTimeoutRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      clearPinLimitNoticeTimers();
+    };
+  }, [clearPinLimitNoticeTimers]);
+
+  const showPinLimitNotice = useCallback(() => {
+    clearPinLimitNoticeTimers();
+    setPinLimitNotice(`Puoi fissare massimo ${MAX_PINNED_NOTES} note`);
+    setPinLimitNoticePhase("enter");
+    pinLimitNoticeHideTimeoutRef.current = window.setTimeout(() => {
+      setPinLimitNoticePhase("leave");
+      pinLimitNoticeHideTimeoutRef.current = null;
+      pinLimitNoticeClearTimeoutRef.current = window.setTimeout(() => {
+        setPinLimitNotice(null);
+        pinLimitNoticeClearTimeoutRef.current = null;
+      }, 240);
+    }, 2600);
+  }, [clearPinLimitNoticeTimers]);
+
   const persist = useCallback(async (next: Note[]) => {
     const sorted = sortNotes(next);
     setNotes(sorted);
@@ -769,7 +861,7 @@ export default function Home() {
         }
 
         await restoreImportedBackup(parsed);
-        alert("Backup ripristinato. L'app verrà ricaricata per applicare tutto.");
+        alert("Backup ripristinato. L'app verrÃ  ricaricata per applicare tutto.");
         window.location.reload();
         return;
       }
@@ -851,7 +943,24 @@ export default function Home() {
   }
 
   async function togglePin(id: string) {
-    const next = notes.map((n) => (n.id === id ? { ...n, pinned: !n.pinned, updatedAt: now() } : n));
+    const targetNote = notes.find((note) => note.id === id);
+    if (!targetNote) return;
+
+    if (!targetNote.pinned && notes.filter((note) => note.pinned).length >= MAX_PINNED_NOTES) {
+      showPinLimitNotice();
+      return;
+    }
+
+    clearPinLimitNoticeTimers();
+    setPinLimitNotice(null);
+
+    const updatedAt = now();
+    const next = targetNote.pinned
+      ? notes.map((n) => (n.id === id ? { ...n, pinned: false, pinnedAt: undefined, updatedAt } : n))
+      : [
+          { ...targetNote, pinned: true, pinnedAt: undefined, updatedAt },
+          ...notes.filter((note) => note.id !== id),
+        ];
     await persist(next);
   }
 
@@ -895,6 +1004,7 @@ export default function Home() {
     setSettingsNameValue(appSettings.userName);
     setSettingsThemeValue(appSettings.theme);
     setSettingsDesignValue(designMode);
+    setSettingsShowColoredTextHighlightsValue(appSettings.showColoredTextHighlights);
     setSettingsMoveCompletedChecklistItemsToBottomValue(appSettings.moveCompletedChecklistItemsToBottom);
     setSettingsShowMathResultsPreviewValue(appSettings.showMathResultsPreview);
     setSettingsShowPersistentDesignSwitcherValue(appSettings.showPersistentDesignSwitcher);
@@ -907,6 +1017,7 @@ export default function Home() {
       userName: settingsNameValue,
       theme: settingsThemeValue,
       hasCompletedOnboarding: appSettings.hasCompletedOnboarding,
+      showColoredTextHighlights: settingsShowColoredTextHighlightsValue,
       moveCompletedChecklistItemsToBottom: settingsMoveCompletedChecklistItemsToBottomValue,
       showMathResultsPreview: settingsShowMathResultsPreviewValue,
       showPersistentDesignSwitcher: settingsShowPersistentDesignSwitcherValue,
@@ -926,15 +1037,117 @@ export default function Home() {
 
   function openFeedbackDialog() {
     setFeedbackValue("");
+    setFeedbackAttachment(null);
+    feedbackDropDepthRef.current = 0;
+    setIsFeedbackDropTarget(false);
     setFeedbackStatus(null);
     setIsFeedbackDialogOpen(true);
+    if (feedbackFileInputRef.current) {
+      feedbackFileInputRef.current.value = "";
+    }
   }
 
   function closeFeedbackDialog() {
     setIsFeedbackDialogOpen(false);
     setIsSubmittingFeedback(false);
     setFeedbackValue("");
+    setFeedbackAttachment(null);
+    feedbackDropDepthRef.current = 0;
+    setIsFeedbackDropTarget(false);
     setFeedbackStatus(null);
+    if (feedbackFileInputRef.current) {
+      feedbackFileInputRef.current.value = "";
+    }
+  }
+
+  function resetFeedbackDropTarget() {
+    feedbackDropDepthRef.current = 0;
+    setIsFeedbackDropTarget(false);
+  }
+
+  function clearFeedbackAttachment() {
+    setFeedbackAttachment(null);
+    if (feedbackFileInputRef.current) {
+      feedbackFileInputRef.current.value = "";
+    }
+  }
+
+  function formatFeedbackAttachmentSize(size: number) {
+    if (size < 1024) return `${size} B`;
+    if (size < 1024 * 1024) return `${Math.max(1, Math.round(size / 1024))} KB`;
+    return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
+  function openFeedbackAttachmentPicker() {
+    if (isSubmittingFeedback) return;
+    feedbackFileInputRef.current?.click();
+  }
+
+  function applyFeedbackAttachment(nextFile: File | null) {
+    if (!nextFile) return;
+
+    if (!nextFile.type.startsWith("image/")) {
+      clearFeedbackAttachment();
+      setFeedbackStatus({
+        kind: "error",
+        text: "Puoi allegare solo immagini.",
+      });
+      return;
+    }
+
+    if (nextFile.size > MAX_FEEDBACK_ATTACHMENT_SIZE) {
+      clearFeedbackAttachment();
+      setFeedbackStatus({
+        kind: "error",
+        text: "Lo screenshot supera 10 MB. Scegli un'immagine piu leggera.",
+      });
+      return;
+    }
+
+    setFeedbackAttachment(nextFile);
+    setFeedbackStatus(null);
+  }
+
+  function handleFeedbackAttachmentChange(event: ChangeEvent<HTMLInputElement>) {
+    applyFeedbackAttachment(event.target.files?.[0] ?? null);
+  }
+
+  function handleFeedbackDragEnter(event: DragEvent<HTMLDivElement>) {
+    if (isSubmittingFeedback) return;
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+
+    event.preventDefault();
+    feedbackDropDepthRef.current += 1;
+    setIsFeedbackDropTarget(true);
+  }
+
+  function handleFeedbackDragOver(event: DragEvent<HTMLDivElement>) {
+    if (isSubmittingFeedback) return;
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+  }
+
+  function handleFeedbackDragLeave(event: DragEvent<HTMLDivElement>) {
+    if (isSubmittingFeedback) return;
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+
+    event.preventDefault();
+    feedbackDropDepthRef.current = Math.max(0, feedbackDropDepthRef.current - 1);
+
+    if (feedbackDropDepthRef.current === 0) {
+      setIsFeedbackDropTarget(false);
+    }
+  }
+
+  function handleFeedbackDrop(event: DragEvent<HTMLDivElement>) {
+    if (isSubmittingFeedback) return;
+    if (!Array.from(event.dataTransfer.types).includes("Files")) return;
+
+    event.preventDefault();
+    resetFeedbackDropTarget();
+    applyFeedbackAttachment(event.dataTransfer.files?.[0] ?? null);
   }
 
   async function submitFeedbackDialog() {
@@ -945,19 +1158,21 @@ export default function Home() {
     setFeedbackStatus(null);
 
     try {
+      const formData = new FormData();
+      formData.set("designMode", designMode);
+      formData.set("message", message);
+      formData.set("userName", normalizedAppUserName);
+      formData.set("version", formatDisplayVersion(appVersion));
+
+      if (feedbackAttachment) {
+        formData.set("screenshot", feedbackAttachment);
+      }
+
       const response = await fetch("/api/feedback", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          designMode,
-          message,
-          userName: normalizedAppUserName,
-          version: formatDisplayVersion(appVersion),
-        }),
+        body: formData,
       });
-      const payload = (await response.json().catch(() => null)) as { error?: string; ok?: boolean } | null;
+      const payload = (await response.json().catch(() => null)) as FeedbackRequestResponse | null;
 
       if (!response.ok || !payload?.ok) {
         setFeedbackStatus({
@@ -968,6 +1183,7 @@ export default function Home() {
       }
 
       setFeedbackValue("");
+      clearFeedbackAttachment();
       setFeedbackStatus({
         kind: "success",
         text: "Feedback ricevuto con successo. Grazie.",
@@ -1002,6 +1218,7 @@ export default function Home() {
     setSettingsNameValue(DEFAULT_APP_SETTINGS.userName);
     setSettingsThemeValue(DEFAULT_APP_SETTINGS.theme);
     setSettingsDesignValue(DEFAULT_DESIGN_MODE);
+    setSettingsShowColoredTextHighlightsValue(DEFAULT_APP_SETTINGS.showColoredTextHighlights);
     setSettingsMoveCompletedChecklistItemsToBottomValue(DEFAULT_APP_SETTINGS.moveCompletedChecklistItemsToBottom);
     setSettingsShowMathResultsPreviewValue(DEFAULT_APP_SETTINGS.showMathResultsPreview);
     setSettingsShowPersistentDesignSwitcherValue(DEFAULT_APP_SETTINGS.showPersistentDesignSwitcher);
@@ -1024,6 +1241,7 @@ export default function Home() {
       userName: onboardingNameValue,
       theme: onboardingThemeValue,
       hasCompletedOnboarding: true,
+      showColoredTextHighlights: DEFAULT_APP_SETTINGS.showColoredTextHighlights,
       moveCompletedChecklistItemsToBottom: DEFAULT_APP_SETTINGS.moveCompletedChecklistItemsToBottom,
       showMathResultsPreview: DEFAULT_APP_SETTINGS.showMathResultsPreview,
       showPersistentDesignSwitcher: DEFAULT_APP_SETTINGS.showPersistentDesignSwitcher,
@@ -1311,7 +1529,7 @@ export default function Home() {
         if (!confirmed) return;
 
         await restoreImportedBackup(parsed);
-        alert("Backup ripristinato. L'app verrà ricaricata per applicare tutto.");
+        alert("Backup ripristinato. L'app verrÃ  ricaricata per applicare tutto.");
         window.location.reload();
         return;
       }
@@ -1345,7 +1563,7 @@ export default function Home() {
     <div className="container">
       <div className="appHeaderBar">
         <div className="appBrand">
-          <div className={"appBrandIcon" + (specialAppBrandIcon ? " appBrandIconSpecial" : "")} aria-hidden="true">
+          <div className={"appBrandIcon" + (specialAppBrandIcon ? " appBrandIconSpecial" : " appBrandIconTheme")} aria-hidden="true">
             {specialAppBrandIcon ? (
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -1361,11 +1579,11 @@ export default function Home() {
               <>
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  src="/icons/notedijaco_icon.png?v=20260303-234200"
+                  src={themeAppIconPath}
                   alt=""
                   width={34}
                   height={34}
-                  className="appBrandIconImage"
+                  className="appBrandIconImage appBrandIconThemeImage"
                 />
               </>
             )}
@@ -1515,6 +1733,7 @@ export default function Home() {
                   noteId={active.id}
                   doc={active.doc}
                   lastUpdatedAt={active.updatedAt}
+                  showColoredTextHighlights={appSettings.showColoredTextHighlights}
                   moveCompletedChecklistItemsToBottom={appSettings.moveCompletedChecklistItemsToBottom}
                   showMathResultsPreview={appSettings.showMathResultsPreview}
                   onChangeDoc={(d) => updateActive({ doc: d, title: titleFromDoc(d) })}
@@ -1592,6 +1811,27 @@ export default function Home() {
                 </div>
               )
             )}
+
+            {pinLimitNotice ? (
+              <div
+                className={"shellToastOverlay" + (pinLimitNoticePhase === "leave" ? " is-leaving" : "")}
+                role="status"
+                aria-live="polite"
+              >
+                <span className="shellToastOverlayIcon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none">
+                    <path
+                      d="M11.9999 17V21M6.9999 12.6667V6C6.9999 4.89543 7.89533 4 8.9999 4H14.9999C16.1045 4 16.9999 4.89543 16.9999 6V12.6667L18.9135 15.4308C19.3727 16.094 18.898 17 18.0913 17H5.90847C5.1018 17 4.62711 16.094 5.08627 15.4308L6.9999 12.6667Z"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                </span>
+                <span>{pinLimitNotice}</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="customEmojiSidebar">
@@ -1614,7 +1854,11 @@ export default function Home() {
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                App di @jacofrau
+                <span>App di</span>
+                <span className="appSignatureAuthorHandle">
+                  <InstagramIcon className="appSignatureAuthorIcon" />
+                  <span>jacofrau</span>
+                </span>
               </a>
               {cloudSyncEnabled ? (
                 <button
@@ -1804,6 +2048,32 @@ export default function Home() {
                   <div className="linkDialogField">
                     <span className="linkDialogLabel linkDialogLabelWithIcon">
                       <span className="linkDialogLabelIcon" aria-hidden="true">
+                        <TextHighlightSettingsIcon />
+                      </span>
+                      <span>Evidenziatore</span>
+                    </span>
+                    <button
+                      className={"settingsToggleOption" + (settingsShowColoredTextHighlightsValue ? " active" : "")}
+                      type="button"
+                      aria-pressed={settingsShowColoredTextHighlightsValue}
+                      onClick={() => {
+                        setSettingsShowColoredTextHighlightsValue((prev) => !prev);
+                      }}
+                    >
+                      <span className="settingsToggleOptionText">
+                        <span className="settingsToggleOptionTitle">Evidenzia il testo</span>
+                        <span className="settingsToggleOptionMeta">
+                          Mostra uno sfondo colorato sotto il testo usando il colore selezionato.
+                        </span>
+                      </span>
+                      <span className="settingsToggleSwitch" aria-hidden="true">
+                        <span className="settingsToggleKnob" />
+                      </span>
+                    </button>
+                  </div>
+                  <div className="linkDialogField">
+                    <span className="linkDialogLabel linkDialogLabelWithIcon">
+                      <span className="linkDialogLabelIcon" aria-hidden="true">
                         <ChecklistSettingsIcon />
                       </span>
                       <span>Checklist:</span>
@@ -1819,7 +2089,7 @@ export default function Home() {
                       <span className="settingsToggleOptionText">
                         <span className="settingsToggleOptionTitle">Ordinamento automatico</span>
                         <span className="settingsToggleOptionMeta">
-                          Quando attivo, le attività completate vengono spostate automaticamente in fondo alla lista.
+                          Quando attivo, le attivitÃ  completate vengono spostate automaticamente in fondo alla lista.
                         </span>
                       </span>
                       <span className="settingsToggleSwitch" aria-hidden="true">
@@ -1916,22 +2186,23 @@ export default function Home() {
                       <span>Tema</span>
                     </span>
                     <div className="settingsThemeGrid" role="radiogroup" aria-label="Tema app">
-                      <button
-                        className={"settingsThemeOption" + (settingsThemeValue === "dark" ? " active" : "")}
-                        type="button"
-                        role="radio"
-                        aria-checked={settingsThemeValue === "dark"}
-                        onClick={() => setSettingsThemeValue("dark")}
-                      >
-                        <span className="settingsThemeSwatch settingsThemeSwatchDark" aria-hidden="true" />
-                        <span className="settingsThemeOptionText">
-                          <span className="settingsThemeOptionTitle">Scuro</span>
-                          <span className="settingsThemeOptionMeta">Tema attuale dell&apos;app</span>
-                        </span>
-                      </button>
+                      {APP_THEME_OPTIONS.map((themeOption) => (
+                        <button
+                          key={themeOption.value}
+                          className={"settingsThemeOption" + (settingsThemeValue === themeOption.value ? " active" : "")}
+                          type="button"
+                          role="radio"
+                          data-theme={themeOption.value}
+                          aria-checked={settingsThemeValue === themeOption.value}
+                          aria-label={themeOption.label}
+                          title={themeOption.label}
+                          onClick={() => setSettingsThemeValue(themeOption.value)}
+                        >
+                          <span className="settingsThemeSwatch" data-theme={themeOption.value} aria-hidden="true" />
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="tagManageHint">Altri temi arriveranno più avanti.</div>
                 </div>
                 </section>
               ) : null}
@@ -2020,17 +2291,62 @@ export default function Home() {
             onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="linkDialogTitle" id="feedback-dialog-title">Suggerimento / Feedback</div>
-            <label className="linkDialogField">
-              <span className="linkDialogLabel">Il tuo messaggio</span>
-              <textarea
-                ref={feedbackTextareaRef}
-                className="feedbackTextarea"
-                value={feedbackValue}
-                onChange={(event) => setFeedbackValue(event.target.value)}
-                placeholder="Scrivi qui il tuo suggerimento..."
-                rows={7}
-              />
-            </label>
+            <div
+              className={"feedbackDropZone" + (isFeedbackDropTarget ? " dragOver" : "")}
+              onDragEnter={handleFeedbackDragEnter}
+              onDragOver={handleFeedbackDragOver}
+              onDragLeave={handleFeedbackDragLeave}
+              onDrop={handleFeedbackDrop}
+            >
+              <label className="linkDialogField">
+                <span className="linkDialogLabel">Il tuo messaggio</span>
+                <textarea
+                  ref={feedbackTextareaRef}
+                  className="feedbackTextarea"
+                  value={feedbackValue}
+                  onChange={(event) => setFeedbackValue(event.target.value)}
+                  placeholder="Scrivi qui il tuo suggerimento..."
+                  rows={7}
+                />
+              </label>
+              <div className="feedbackAttachmentSection">
+                <input
+                  ref={feedbackFileInputRef}
+                  className="feedbackFileInput"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFeedbackAttachmentChange}
+                  tabIndex={-1}
+                />
+                <button
+                  className="feedbackAttachmentButton"
+                  type="button"
+                  onClick={openFeedbackAttachmentPicker}
+                  disabled={isSubmittingFeedback}
+                >
+                  <span className="feedbackAttachmentButtonIcon" aria-hidden="true">
+                    <FeedbackAttachmentIcon />
+                  </span>
+                  <span>Allega screenshot</span>
+                </button>
+                {feedbackAttachment ? (
+                  <div className="feedbackAttachmentMeta">
+                    <div className="feedbackAttachmentMetaText">
+                      <span className="feedbackAttachmentName">{feedbackAttachment.name}</span>
+                      <span className="feedbackAttachmentSize">{formatFeedbackAttachmentSize(feedbackAttachment.size)}</span>
+                    </div>
+                    <button
+                      className="feedbackAttachmentRemoveButton"
+                      type="button"
+                      onClick={clearFeedbackAttachment}
+                      disabled={isSubmittingFeedback}
+                    >
+                      Rimuovi
+                    </button>
+                  </div>
+                ) : null}
+              </div>
+            </div>
             {feedbackStatus ? (
               <div className={"feedbackDialogStatus" + (feedbackStatus.kind === "success" ? " success" : " error")}>
                 {feedbackStatus.text}
@@ -2248,3 +2564,4 @@ export default function Home() {
     </div>
   );
 }
+

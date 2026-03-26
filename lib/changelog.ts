@@ -9,20 +9,38 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.0.5b",
+    title: "Colorful Update",
+    items: [
+      {
+        text: "🎨 Aggiunti i temi in-app",
+      },
+      {
+        text: "🖍️ Aggiunta la possibilità di evidenziare il testo",
+      },
+      {
+        text: "✉️ Ora puoi inviarmi feedback direttamente dall'app (Impostazioni → App)",
+      },
+      {
+        text: "🪲 Risolti parecchi bug",
+      },
+    ],
+  },
+  {
     version: "1.0.4b",
     title: "User-Experience Update",
     items: [
       {
-        text: "Esperienza utente migliorata (ora l'app è davvero tua!) 👤",
+        text: "👤 Esperienza utente migliorata (ora l'app è davvero tua!)",
       },
       {
-        text: "Ora l'app ha un suo pannello Impostazioni dedicato ⚙️",
+        text: "⚙️ Ora l'app ha un suo pannello Impostazioni dedicato",
       },
       {
-        text: "Grafica migliorata (anche l'occhio vuole la sua parte 👀)",
+        text: "✨ Grafica migliorata (anche l'occhio vuole la sua parte 👀)",
       },
       {
-        text: "Risolti parecchi bug 😤",
+        text: "🪲 Risolti parecchi bug",
       },
     ],
   },
@@ -31,13 +49,13 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "New design!",
     items: [
       {
-        text: "Nuovo design dell'app disponibile",
+        text: "🎨 Nuovo design dell'app disponibile",
       },
       {
-        text: "Ricerca migliorata",
+        text: "🔎 Ricerca migliorata",
       },
       {
-        text: "Corretti alcuni bug",
+        text: "🪲 Corretti alcuni bug",
       },
     ],
   },
@@ -46,10 +64,10 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Printing Update",
     items: [
       {
-        text: "Introdotta la possibilità di stampare le proprie note",
+        text: "🖨️ Introdotta la possibilità di stampare le proprie note",
       },
       {
-        text: "Corretti alcuni bug",
+        text: "🪲 Corretti alcuni bug",
       },
     ],
   },
@@ -58,14 +76,14 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Refinement Update",
     items: [
       {
-        text: "Aggiunta la funzione ",
+        text: "🔗 Aggiunta la funzione ",
         bold: "Link",
       },
       {
-        text: "Piccole migliorie all'interfaccia grafica",
+        text: "✨ Piccole migliorie all'interfaccia grafica",
       },
       {
-        text: "Corretti alcuni bug",
+        text: "🪲 Corretti alcuni bug",
       },
     ],
   },
@@ -74,7 +92,7 @@ export const CHANGELOG: ChangelogEntry[] = [
     title: "Prima Release",
     items: [
       {
-        text: "Pubblicata la prima release",
+        text: "🚀 Pubblicata la prima release",
       },
     ],
   },
