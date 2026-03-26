@@ -1,63 +1,46 @@
 # Note by Jaco
 
-Le tue note, in una desktop app elegante, veloce e piena di personalità.
+La tua nuova app preferita!
 
-`Note by Jaco` è pensata per chi vuole scrivere al volo, organizzare idee, aggiungere stile ai propri appunti e ritrovare tutto in un attimo, senza complicazioni.
+`Note by Jaco` è stata concepita inizialmente come un'app desktop in grado di applicare sticker personalizzati al proprio testo, ovviamente ispirandosi alle "note app" più famose.
 
-## Cosa puoi fare
+## Come si presenta?
 
-### Scrivere note in modo naturale
-- crea nuove note in pochi secondi
-- salvataggio automatico locale
-- titolo ricavato automaticamente dal contenuto
-- anteprima rapida nella lista note
-- note fissate in alto con pin
-- archivio note con ripristino immediato
-- ricerca veloce per titolo
-- tag personalizzati per organizzare tutto meglio
+### L'organizzazione è la prima regola!
+- l'app presenta due diversi design;
+- lista note, nota attiva e sezione sticker hanno spazi dedicati;
+- puoi fissare e archiviare le tue note;
+- la ricerca è stata pensata per rendere il più semplice possibile trovare le proprie note;
+- puoi impostare dei tag perosnalizzati alle note.
 
-### Usare un editor ricco ma semplice
-- testo normale, titoli e sottotitoli
-- grassetto, corsivo, sottolineato e barrato
-- monospazio, citazioni e spoiler
-- checklist
-- elenchi numerati e puntati
-- link con finestra dedicata
-- colori testo predefiniti
-- tabelle con gestione righe e colonne
-- undo / redo
-- stampa rapida della nota attiva
+### L'editor!
+- diversi stili di testo;
+- grassetto, corsivo, sottolineato e barrato;
+- elenchi e checklist.
 
-### Personalizzare le note con sticker
-- importa i tuoi sticker personali
-- supporto PNG, JPG, WebP, GIF e SVG
-- inserimento sticker direttamente dentro le note
-- riordino dei pacchetti con drag and drop
-- categorie dedicate per tenere tutto in ordine
+Nel design `Classico` dovrai selezionare il testo per far appaire la bolla dell'editor!
 
-### Portare le note dove vuoi
-- esporta tutti i dati locali in `note_backup.nby`
-- salva una singola nota come file `.nby`
-- nella desktop app i file `.nby` vengono salvati direttamente sul Desktop
-- apri una nota `.nby` con doppio click nella desktop app
-- importa backup `.nby`, backup JSON legacy o singole note
-- i backup `.nby` ripristinano note, sticker e impostazioni locali
+### Gli sticker!
+- importa i tuoi sticker personali;
+- organizza i diversi pacchetti di sticker.
 
-### Tenere tutto sincronizzato
-- sync cloud opzionale
-- stessa chiave privata su più dispositivi
-- funziona anche offline senza cloud
+### Salvataggio!
+- le note sono sempre sincronizzate in locale;
+- puoi esportare le note singolarmente o fare il tuo backup;
+- i collegamenti riporteranno alla nora salvata.
 
-## Installazione
+Le note utilizzano il formato `.nby`.
 
-### Windows
+## Installazione:
+
+### Windows:
 1. Apri la sezione `Releases` del repository.
 2. Scarica l'ultima versione per Windows.
 3. Estrai lo zip, se presente.
 4. Avvia il file `.exe` scaricato.
 5. Completa l'installazione e apri l'app.
 
-### macOS
+### macOS:
 1. Apri la sezione `Releases` del repository.
 2. Scarica l'ultima versione per Mac in formato `.dmg` oppure `.zip`.
 3. Apri il file scaricato.
@@ -66,16 +49,8 @@ Le tue note, in una desktop app elegante, veloce e piena di personalità.
 
 Se al primo avvio macOS mostra un avviso di sicurezza, apri `Impostazioni di Sistema > Privacy e Sicurezza` e scegli `Apri comunque`.
 
-## Perché usarla
-
-- è veloce da aprire e immediata da capire
-- resta piacevole anche con tante note
-- unisce editor ricco e organizzazione semplice
-- ti permette di salvare una singola nota come file dedicato
-- è pensata per uso quotidiano, personale e creativo
-
-## Download
+## Download:
 
 Le versioni pubbliche vengono distribuite nella sezione `Releases` del repository:
 
-[Vai alle Releases](https://github.com/jacofrau/Note/releases)
+[Proprio qui](https://github.com/jacofrau/Note/releases)
