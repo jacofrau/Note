@@ -136,27 +136,18 @@ jobs:
       - name: Build Next app
         run: npm run build
 
-      - name: Package macOS app
-        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dir --x64 --publish never
-
-      - name: Archive macOS app
-        shell: bash
-        run: |
-          app_path="$(find dist-desktop/mac -maxdepth 1 -name '*.app' -print -quit)"
-          if [ -z "$app_path" ]; then
-            echo "macOS app bundle not found" >&2
-            exit 1
-          fi
-
-          version="$(node -p "require('./package.json').version")"
-          zip_name="Note-${version}-mac-x64.zip"
-          ditto -c -k --sequesterRsrc --keepParent "$app_path" "dist-desktop/$zip_name"
+      - name: Package macOS artifacts
+        run: node ./scripts/run-electron-builder.cjs --config electron-builder.config.cjs --mac dmg zip --x64 --publish never
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: macos-release
-          path: dist-desktop/*.zip
+          path: |
+            dist-desktop/*.dmg
+            dist-desktop/*.zip
+            dist-desktop/*.blockmap
+            dist-desktop/latest-mac*.yml
           if-no-files-found: error
 
       - name: Upload macOS diagnostics
