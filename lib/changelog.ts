@@ -9,6 +9,24 @@ export type ChangelogEntry = {
 
 export const CHANGELOG: ChangelogEntry[] = [
   {
+    version: "1.0.6b",
+    title: "Tags and Stickers Update",
+    items: [
+      {
+        text: "\u{1F3F7}\uFE0F Migliorato il sistema dei tag: ora raccolgono meglio le note",
+      },
+      {
+        text: "\u{1F5BC}\uFE0F Revamp completo del sistema degli sticker: era troppo complesso",
+      },
+      {
+        text: "\u2728 Leggere migliorie all'interfaccia grafica",
+      },
+      {
+        text: "\u{1FAB2} Risolti parecchi bug",
+      },
+    ],
+  },
+  {
     version: "1.0.5b",
     title: "Colorful Update",
     items: [

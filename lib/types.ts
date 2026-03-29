@@ -19,8 +19,12 @@ export type Sticker = {
   label: string;
   src: string; // data URL
   createdAt: number;
+  favorite?: boolean;
+  hasBorder?: boolean;
+  builtin?: boolean;
 };
 
+// Legacy pack model kept for migration/import compatibility.
 export type StickerPack = {
   id: string;
   name: string;

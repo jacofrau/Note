@@ -15,6 +15,7 @@ const pendingNoteFiles = Array.isArray(rawPendingNoteFiles)
   ? rawPendingNoteFiles.map((entry) => cloneStructuredValue(entry))
   : [];
 const openNoteFileListeners = new Set();
+const updateStateListeners = new Set();
 
 function getSnapshotValue(key) {
   if (!Object.prototype.hasOwnProperty.call(desktopStorageSnapshot, key)) {
@@ -49,9 +50,25 @@ ipcRenderer.on("desktop:open-note-file", (_event, payload) => {
   flushPendingNoteFiles();
 });
 
+ipcRenderer.on("desktop:update-state", (_event, payload) => {
+  const nextState = cloneStructuredValue(payload);
+
+  for (const listener of updateStateListeners) {
+    try {
+      listener(nextState);
+    } catch {
+      // Ignora errori renderer per singolo listener.
+    }
+  }
+});
+
 contextBridge.exposeInMainWorld("noteDiJacoDesktop", {
   platform: process.platform,
   openPrintPreview: () => ipcRenderer.invoke("desktop:open-print-preview"),
+  getUpdateState: () => ipcRenderer.invoke("desktop-update:get-state"),
+  checkForUpdates: () => ipcRenderer.invoke("desktop-update:check"),
+  downloadUpdate: () => ipcRenderer.invoke("desktop-update:download"),
+  installUpdate: () => ipcRenderer.invoke("desktop-update:install"),
   onBeforeClose: (listener) => {
     if (typeof listener !== "function") {
       return () => {};
@@ -79,6 +96,16 @@ contextBridge.exposeInMainWorld("noteDiJacoDesktop", {
     flushPendingNoteFiles();
     return () => {
       openNoteFileListeners.delete(listener);
+    };
+  },
+  onUpdateState: (listener) => {
+    if (typeof listener !== "function") {
+      return () => {};
+    }
+
+    updateStateListeners.add(listener);
+    return () => {
+      updateStateListeners.delete(listener);
     };
   },
   saveNoteFileToDesktop: (payload) => ipcRenderer.invoke("desktop-note-file:save-to-desktop", payload),

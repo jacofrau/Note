@@ -4,21 +4,27 @@ import dynamic from "next/dynamic";
 import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { nanoid } from "nanoid";
 import packageJson from "../package.json";
-import { DesignModeIcon, InstagramIcon, TagLabelIcon, ThemePaletteIcon } from "@/components/AppIcons";
-import DesignModeOption from "@/components/DesignModeOption";
+import { DesignModeIcon, InstagramIcon, PencilCircleIcon, StarIcon, TagLabelIcon } from "@/components/AppIcons";
 import DeleteConfirmDialog from "@/components/dialogs/DeleteConfirmDialog";
 import OnboardingDialog from "@/components/dialogs/OnboardingDialog";
 import ResetAppDialog from "@/components/dialogs/ResetAppDialog";
+import SettingsDialog, { type SettingsDialogTab } from "@/components/dialogs/SettingsDialog";
 import TagManageDialog from "@/components/dialogs/TagManageDialog";
 import NoteList from "@/components/NoteList";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
 import PrintIcon from "@/components/PrintIcon";
 import { CHANGELOG } from "@/lib/changelog";
 import {
+  checkDesktopForUpdates,
+  downloadDesktopUpdate,
   getDesktopPlatform,
+  getDesktopUpdateState,
+  installDesktopUpdate,
   saveDesktopNoteFileToDesktop,
   subscribeDesktopOpenNoteFile,
+  subscribeDesktopUpdateState,
   type DesktopOpenNoteFilePayload,
+  type DesktopUpdateState,
 } from "@/lib/desktopBridge";
 import {
   BACKUP_FILE_NAME,
@@ -34,7 +40,6 @@ import {
   getNoteTitleSearchTextFromDoc as titleSearchFromDoc,
 } from "@/lib/noteText";
 import {
-  APP_THEME_OPTIONS,
   DEFAULT_APP_SETTINGS,
   getAppThemeColor,
   getAppThemeIconPath,
@@ -44,6 +49,7 @@ import {
   setDocumentAppSettings,
   setStoredAppSettings,
   subscribeAppSettings,
+  type AppSettings,
   type AppTheme,
 } from "@/lib/appSettings";
 import {
@@ -55,20 +61,20 @@ import {
   subscribeDesignMode,
   type DesignMode,
 } from "@/lib/designMode";
-import { getCustomTagLegendGroups, NotesTagIcon } from "@/lib/tagDefinitions";
+import { getCustomTagLegendGroups } from "@/lib/tagDefinitions";
 import type { Note } from "@/lib/types";
 import {
   getStoredCloudSyncAccessKey,
   hasCloudSyncAccessKey,
   isCloudSyncEnabledClient,
-  loadStickerPacks,
+  loadStickers,
   loadNotes,
   normalizeNotesData,
   resetStoredAppData,
   saveNotesLocallyImmediately,
   saveNotes,
   saveNotesImmediately,
-  saveStickerPacks,
+  saveStickers,
   setStoredCloudSyncAccessKey,
   sortNotes,
 } from "@/lib/storage";
@@ -79,6 +85,8 @@ const updateManifestUrl = process.env.NEXT_PUBLIC_UPDATE_MANIFEST_URL?.trim() ||
 const SAVE_DEBOUNCE_MS = 220;
 const MAX_PINNED_NOTES = 3;
 const MAX_FEEDBACK_ATTACHMENT_SIZE = 10 * 1024 * 1024;
+
+type ShellNoticeIcon = "default" | "favorite";
 
 const Editor = dynamic(() => import("@/components/Editor"), {
   ssr: false,
@@ -101,7 +109,7 @@ const StickerPackPicker = dynamic(() => import("@/components/CustomEmojiPicker")
         </div>
       </div>
       <div className="deferredPanelBody">
-        <div className="deferredPanelText">Sto caricando i tuoi pacchetti sticker.</div>
+        <div className="deferredPanelText">Sto caricando i tuoi sticker.</div>
       </div>
     </div>
   ),
@@ -112,7 +120,6 @@ type AvailableUpdate = {
   version: string;
 };
 
-type SettingsDialogTab = "notes" | "design" | "user";
 type SpecialAppBrandIcon = {
   imageClassName?: string;
   src: string;
@@ -251,6 +258,57 @@ function compareVersions(left: string, right: string): number {
   return 0;
 }
 
+function shouldShowDesktopUpdateBadge(updateState: DesktopUpdateState | null): updateState is DesktopUpdateState {
+  if (!updateState) return false;
+
+  return (
+    updateState.kind === "available" ||
+    updateState.kind === "downloading" ||
+    updateState.kind === "downloaded" ||
+    (updateState.kind === "error" && Boolean(updateState.availableVersion))
+  );
+}
+
+function getDesktopUpdateBadgeText(updateState: DesktopUpdateState): string {
+  const versionLabel = updateState.availableVersion ? formatDisplayVersion(updateState.availableVersion) : "";
+
+  if (updateState.kind === "available") {
+    return versionLabel ? `Aggiorna a ${versionLabel}` : "Aggiorna";
+  }
+
+  if (updateState.kind === "downloading") {
+    const progressPercent = Number.isFinite(updateState.progressPercent)
+      ? Math.max(0, Math.min(100, Math.round(updateState.progressPercent)))
+      : 0;
+
+    return versionLabel
+      ? progressPercent > 0
+        ? `Scarico ${versionLabel} ${progressPercent}%`
+        : `Scarico ${versionLabel}`
+      : progressPercent > 0
+        ? `Scarico ${progressPercent}%`
+        : "Scarico update";
+  }
+
+  if (updateState.kind === "downloaded") {
+    return versionLabel ? `Riavvia per installare ${versionLabel}` : "Riavvia per installare";
+  }
+
+  if (updateState.kind === "error") {
+    return versionLabel ? `Riprova aggiornamento ${versionLabel}` : "Riprova aggiornamento";
+  }
+
+  return "";
+}
+
+function getDesktopUpdateBadgeTitle(updateState: DesktopUpdateState): string {
+  if (updateState.kind === "error" && updateState.error) {
+    return `Aggiornamento non riuscito: ${updateState.error}`;
+  }
+
+  return getDesktopUpdateBadgeText(updateState);
+}
+
 function EmptySearchIcon() {
   return (
     <svg viewBox="0 0 32 32" fill="none" aria-hidden="true">
@@ -264,64 +322,6 @@ function EmptySearchIcon() {
 
 function TagLegendIcon() {
   return <TagLabelIcon />;
-}
-
-function ChecklistSettingsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" />
-      <path
-        d="M8.5 12.5L10.5 14.5L15.5 9.5"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-function TextHighlightSettingsIcon() {
-  return <span className="settingsHighlightIcon" aria-hidden="true" />;
-}
-
-function MathResultsIcon() {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M18.707 8.535c-.391-.391-1.023-.391-1.414 0-1.264 1.264-3.321 1.264-4.586 0-2.045-2.044-5.371-2.042-7.414 0-.391.391-.391 1.023 0 1.414s1.023.391 1.414 0c.374-.374.82-.624 1.293-.776v7.827c0 .553.447 1 1 1s1-.447 1-1v-7.826c.472.152.919.401 1.293.775.768.767 1.715 1.245 2.707 1.437v5.614c0 .553.447 1 1 1s1-.447 1-1v-5.614c.992-.191 1.939-.67 2.707-1.437.391-.39.391-1.023 0-1.414z"
-        fill="currentColor"
-      />
-    </svg>
-  );
-}
-
-function SettingsResetIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path
-        d="M6 6l8 8M14 6l-8 8"
-        stroke="currentColor"
-        strokeWidth="1.9"
-        strokeLinecap="round"
-      />
-    </svg>
-  );
-}
-
-function FeedbackIcon() {
-  return (
-    <svg viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path
-        d="M4.75 15.25V4.75C4.75 4.198 5.198 3.75 5.75 3.75H14.25C14.802 3.75 15.25 4.198 15.25 4.75V11.75C15.25 12.302 14.802 12.75 14.25 12.75H8.75L4.75 15.25Z"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <path d="M7 7.5H13M7 10H11.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
-    </svg>
-  );
 }
 
 function FeedbackAttachmentIcon() {
@@ -346,7 +346,8 @@ export default function Home() {
   const [showArchived, setShowArchived] = useState(false);
   const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const insertCustomEmojiFn = useRef<null | ((src: string) => void)>(null);
+  const [isTagPickerOpen, setIsTagPickerOpen] = useState(false);
+  const insertCustomEmojiFn = useRef<null | ((sticker: { src: string; hasBorder?: boolean }) => void)>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingSaveRef = useRef(false);
   const latestNotesRef = useRef<Note[]>([]);
@@ -356,6 +357,8 @@ export default function Home() {
     undo: () => void;
     redo: () => void;
   } | null>(null);
+  const [desktopPlatformState, setDesktopPlatformState] = useState<string | null>(null);
+  const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [deleteConfirmState, setDeleteConfirmState] = useState<{ id: string; label: string } | null>(null);
   const [tagDialogState, setTagDialogState] = useState<{ id: string; label: string; hasTag: boolean } | null>(null);
@@ -374,6 +377,7 @@ export default function Home() {
   const [isFeedbackDropTarget, setIsFeedbackDropTarget] = useState(false);
   const [feedbackStatus, setFeedbackStatus] = useState<{ kind: "error" | "success"; text: string } | null>(null);
   const [pinLimitNotice, setPinLimitNotice] = useState<string | null>(null);
+  const [pinLimitNoticeIcon, setPinLimitNoticeIcon] = useState<ShellNoticeIcon>("default");
   const [pinLimitNoticePhase, setPinLimitNoticePhase] = useState<"enter" | "leave">("enter");
   const [settingsNameValue, setSettingsNameValue] = useState("");
   const [settingsThemeValue, setSettingsThemeValue] = useState<AppTheme>(DEFAULT_APP_SETTINGS.theme);
@@ -387,6 +391,9 @@ export default function Home() {
   );
   const [settingsShowMathResultsPreviewValue, setSettingsShowMathResultsPreviewValue] = useState(
     DEFAULT_APP_SETTINGS.showMathResultsPreview,
+  );
+  const [settingsWhitePaperModeValue, setSettingsWhitePaperModeValue] = useState(
+    DEFAULT_APP_SETTINGS.whitePaperMode,
   );
   const [settingsShowPersistentDesignSwitcherValue, setSettingsShowPersistentDesignSwitcherValue] = useState(
     DEFAULT_APP_SETTINGS.showPersistentDesignSwitcher,
@@ -410,6 +417,7 @@ export default function Home() {
   const feedbackDropDepthRef = useRef(0);
   const settingsInputRef = useRef<HTMLInputElement | null>(null);
   const onboardingInputRef = useRef<HTMLInputElement | null>(null);
+  const settingsPreviewBaselineRef = useRef<{ appSettings: AppSettings; designMode: DesignMode } | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -447,7 +455,7 @@ export default function Home() {
       }
 
       const normalizedTag = normalizeTagLabel(note.tag ?? "");
-      if (normalizedTag) {
+      if (normalizedTag && !note.archived) {
         tagSet.add(normalizedTag);
       }
 
@@ -457,7 +465,7 @@ export default function Home() {
     }
 
     const nextAvailableTags = [...tagSet].sort((a, b) => a.localeCompare(b, "it", { sensitivity: "base" }));
-    const nextEffectiveSelectedTag = selectedTag && tagSet.has(selectedTag) ? selectedTag : null;
+    const nextEffectiveSelectedTag = !showArchived && selectedTag && tagSet.has(selectedTag) ? selectedTag : null;
     const nextFiltered = !hasSearchQuery && !nextEffectiveSelectedTag
       ? nextVisibleNotes
       : nextVisibleNotes.filter((note) => {
@@ -510,6 +518,11 @@ export default function Home() {
   const specialAppBrandIcon = useMemo(() => getSpecialAppBrandIcon(normalizedAppUserName), [normalizedAppUserName]);
   const themeAppIconPath = useMemo(() => getAppThemeIconPath(appSettings.theme), [appSettings.theme]);
   const isOnboardingDialogOpen = !appSettings.hasCompletedOnboarding;
+  const isDesktopApp = Boolean(desktopPlatformState);
+  const showDesktopUpdateBadge = shouldShowDesktopUpdateBadge(desktopUpdateState);
+  const desktopUpdateBadgeText = showDesktopUpdateBadge ? getDesktopUpdateBadgeText(desktopUpdateState) : "";
+  const desktopUpdateBadgeTitle = showDesktopUpdateBadge ? getDesktopUpdateBadgeTitle(desktopUpdateState) : "";
+  const isDesktopUpdateBusy = desktopUpdateState?.kind === "downloading";
 
   useEffect(() => {
     if (!isOnboardingDialogOpen) return;
@@ -545,19 +558,17 @@ export default function Home() {
   }, [appSettings.theme]);
 
   useEffect(() => {
-    if (!updateManifestUrl) return;
-
     let isDisposed = false;
+    const detectedDesktopPlatform = getDesktopPlatform();
+    setDesktopPlatformState(detectedDesktopPlatform);
 
-    async function checkForUpdates() {
+    let unsubscribeDesktopUpdateState = () => {};
+
+    async function checkWebForUpdates() {
+      if (!updateManifestUrl) return;
+
       try {
         const requestUrl = new URL(updateManifestUrl, window.location.origin);
-        const desktopPlatform = getDesktopPlatform();
-
-        if (desktopPlatform) {
-          requestUrl.searchParams.set("platform", desktopPlatform);
-        }
-
         const response = await fetch(requestUrl.toString(), {
           cache: "no-store",
         });
@@ -580,19 +591,58 @@ export default function Home() {
       }
     }
 
-    void checkForUpdates();
+    async function setupDesktopUpdates() {
+      unsubscribeDesktopUpdateState = subscribeDesktopUpdateState((nextState) => {
+        if (!isDisposed) {
+          setDesktopUpdateState(nextState);
+        }
+      });
+
+      const initialUpdateState = await getDesktopUpdateState();
+      if (!isDisposed) {
+        setDesktopUpdateState(initialUpdateState);
+      }
+
+      await checkDesktopForUpdates();
+    }
+
+    if (detectedDesktopPlatform) {
+      void setupDesktopUpdates();
+    } else {
+      void checkWebForUpdates();
+    }
 
     const onVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
-      void checkForUpdates();
+
+      if (detectedDesktopPlatform) {
+        void checkDesktopForUpdates();
+        return;
+      }
+
+      void checkWebForUpdates();
     };
 
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       isDisposed = true;
+      unsubscribeDesktopUpdateState();
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
+
+  const handleDesktopUpdateAction = useCallback(() => {
+    if (!desktopUpdateState) return;
+
+    if (desktopUpdateState.kind === "available" || desktopUpdateState.kind === "error") {
+      void downloadDesktopUpdate();
+      return;
+    }
+
+    if (desktopUpdateState.kind === "downloaded") {
+      void installDesktopUpdate();
+    }
+  }, [desktopUpdateState]);
 
   useEffect(() => {
     document.title = appDisplayName;
@@ -743,19 +793,27 @@ export default function Home() {
     };
   }, [clearPinLimitNoticeTimers]);
 
-  const showPinLimitNotice = useCallback(() => {
-    clearPinLimitNoticeTimers();
-    setPinLimitNotice(`Puoi fissare massimo ${MAX_PINNED_NOTES} note`);
-    setPinLimitNoticePhase("enter");
-    pinLimitNoticeHideTimeoutRef.current = window.setTimeout(() => {
-      setPinLimitNoticePhase("leave");
-      pinLimitNoticeHideTimeoutRef.current = null;
-      pinLimitNoticeClearTimeoutRef.current = window.setTimeout(() => {
-        setPinLimitNotice(null);
-        pinLimitNoticeClearTimeoutRef.current = null;
-      }, 240);
-    }, 2600);
-  }, [clearPinLimitNoticeTimers]);
+  const showPinLimitNotice = useCallback(
+    (
+      message = `Puoi fissare massimo ${MAX_PINNED_NOTES} note`,
+      options?: { icon?: Exclude<ShellNoticeIcon, "default"> },
+    ) => {
+      clearPinLimitNoticeTimers();
+      setPinLimitNotice(message);
+      setPinLimitNoticeIcon(options?.icon ?? "default");
+      setPinLimitNoticePhase("enter");
+      pinLimitNoticeHideTimeoutRef.current = window.setTimeout(() => {
+        setPinLimitNoticePhase("leave");
+        pinLimitNoticeHideTimeoutRef.current = null;
+        pinLimitNoticeClearTimeoutRef.current = window.setTimeout(() => {
+          setPinLimitNotice(null);
+          setPinLimitNoticeIcon("default");
+          pinLimitNoticeClearTimeoutRef.current = null;
+        }, 240);
+      }, 2600);
+    },
+    [clearPinLimitNoticeTimers],
+  );
 
   const persist = useCallback(async (next: Note[]) => {
     const sorted = sortNotes(next);
@@ -797,7 +855,7 @@ export default function Home() {
       appSettings: ReturnType<typeof getStoredAppSettings> | null;
       designMode: ReturnType<typeof getStoredDesignMode> | null;
       notes: Note[];
-      stickerPacks: Awaited<ReturnType<typeof loadStickerPacks>>;
+      stickers: Awaited<ReturnType<typeof loadStickers>>;
     }) => {
       flushPendingSave();
 
@@ -809,7 +867,7 @@ export default function Home() {
 
       const nextNotes = normalizeTitles(sortNotes(options.notes));
       await saveNotes(nextNotes);
-      await saveStickerPacks(options.stickerPacks);
+      await saveStickers(options.stickers);
 
       const nextAppSettings = options.appSettings ?? getStoredAppSettings();
       setStoredAppSettings(nextAppSettings);
@@ -980,7 +1038,16 @@ export default function Home() {
     setCloudKeyValue("");
   }
 
-  function closeSettingsDialog() {
+  function closeSettingsDialog(options?: { restorePreview?: boolean }) {
+    const shouldRestorePreview = options?.restorePreview ?? true;
+    const baseline = settingsPreviewBaselineRef.current;
+
+    if (shouldRestorePreview && baseline) {
+      setDocumentAppSettings(baseline.appSettings);
+      setDocumentDesignMode(baseline.designMode);
+    }
+
+    settingsPreviewBaselineRef.current = null;
     setIsSettingsDialogOpen(false);
     setIsResetAppDialogOpen(false);
     closeFeedbackDialog();
@@ -1001,12 +1068,17 @@ export default function Home() {
   }
 
   function openSettingsDialog() {
+    settingsPreviewBaselineRef.current = {
+      appSettings: appSettings,
+      designMode,
+    };
     setSettingsNameValue(appSettings.userName);
     setSettingsThemeValue(appSettings.theme);
     setSettingsDesignValue(designMode);
     setSettingsShowColoredTextHighlightsValue(appSettings.showColoredTextHighlights);
     setSettingsMoveCompletedChecklistItemsToBottomValue(appSettings.moveCompletedChecklistItemsToBottom);
     setSettingsShowMathResultsPreviewValue(appSettings.showMathResultsPreview);
+    setSettingsWhitePaperModeValue(appSettings.whitePaperMode);
     setSettingsShowPersistentDesignSwitcherValue(appSettings.showPersistentDesignSwitcher);
     setSettingsActiveTab("notes");
     setIsSettingsDialogOpen(true);
@@ -1016,15 +1088,17 @@ export default function Home() {
     const nextSettings = {
       userName: settingsNameValue,
       theme: settingsThemeValue,
-      hasCompletedOnboarding: appSettings.hasCompletedOnboarding,
+      hasCompletedOnboarding:
+        settingsPreviewBaselineRef.current?.appSettings.hasCompletedOnboarding ?? appSettings.hasCompletedOnboarding,
       showColoredTextHighlights: settingsShowColoredTextHighlightsValue,
       moveCompletedChecklistItemsToBottom: settingsMoveCompletedChecklistItemsToBottomValue,
       showMathResultsPreview: settingsShowMathResultsPreviewValue,
+      whitePaperMode: settingsWhitePaperModeValue,
       showPersistentDesignSwitcher: settingsShowPersistentDesignSwitcherValue,
     };
     persistAppSettings(nextSettings);
     applyDesignMode(settingsDesignValue);
-    closeSettingsDialog();
+    closeSettingsDialog({ restorePreview: false });
   }
 
   function openResetAppDialog() {
@@ -1221,6 +1295,7 @@ export default function Home() {
     setSettingsShowColoredTextHighlightsValue(DEFAULT_APP_SETTINGS.showColoredTextHighlights);
     setSettingsMoveCompletedChecklistItemsToBottomValue(DEFAULT_APP_SETTINGS.moveCompletedChecklistItemsToBottom);
     setSettingsShowMathResultsPreviewValue(DEFAULT_APP_SETTINGS.showMathResultsPreview);
+    setSettingsWhitePaperModeValue(DEFAULT_APP_SETTINGS.whitePaperMode);
     setSettingsShowPersistentDesignSwitcherValue(DEFAULT_APP_SETTINGS.showPersistentDesignSwitcher);
     setOnboardingNameValue(DEFAULT_APP_SETTINGS.userName);
     setOnboardingThemeValue(DEFAULT_APP_SETTINGS.theme);
@@ -1232,7 +1307,7 @@ export default function Home() {
     setShowArchived(false);
     setSelectedTag(null);
     setQuery("");
-    closeSettingsDialog();
+    closeSettingsDialog({ restorePreview: false });
     window.location.reload();
   }
 
@@ -1244,6 +1319,7 @@ export default function Home() {
       showColoredTextHighlights: DEFAULT_APP_SETTINGS.showColoredTextHighlights,
       moveCompletedChecklistItemsToBottom: DEFAULT_APP_SETTINGS.moveCompletedChecklistItemsToBottom,
       showMathResultsPreview: DEFAULT_APP_SETTINGS.showMathResultsPreview,
+      whitePaperMode: DEFAULT_APP_SETTINGS.whitePaperMode,
       showPersistentDesignSwitcher: DEFAULT_APP_SETTINGS.showPersistentDesignSwitcher,
     };
     persistAppSettings(nextSettings);
@@ -1368,6 +1444,33 @@ export default function Home() {
   useEffect(() => {
     if (!isSettingsDialogOpen) return;
 
+    const preservedSettings = settingsPreviewBaselineRef.current?.appSettings ?? DEFAULT_APP_SETTINGS;
+    setDocumentAppSettings({
+      userName: settingsNameValue,
+      theme: settingsThemeValue,
+      hasCompletedOnboarding: preservedSettings.hasCompletedOnboarding,
+      showColoredTextHighlights: settingsShowColoredTextHighlightsValue,
+      moveCompletedChecklistItemsToBottom: settingsMoveCompletedChecklistItemsToBottomValue,
+      showMathResultsPreview: settingsShowMathResultsPreviewValue,
+      whitePaperMode: settingsWhitePaperModeValue,
+      showPersistentDesignSwitcher: settingsShowPersistentDesignSwitcherValue,
+    });
+    setDocumentDesignMode(settingsDesignValue);
+  }, [
+    isSettingsDialogOpen,
+    settingsDesignValue,
+    settingsMoveCompletedChecklistItemsToBottomValue,
+    settingsNameValue,
+    settingsShowColoredTextHighlightsValue,
+    settingsShowMathResultsPreviewValue,
+    settingsShowPersistentDesignSwitcherValue,
+    settingsThemeValue,
+    settingsWhitePaperModeValue,
+  ]);
+
+  useEffect(() => {
+    if (!isSettingsDialogOpen) return;
+
     const timeoutId = window.setTimeout(() => {
       settingsInputRef.current?.focus();
       settingsInputRef.current?.select();
@@ -1380,12 +1483,26 @@ export default function Home() {
         setIsResetAppDialogOpen(false);
         return;
       }
+
+      const baseline = settingsPreviewBaselineRef.current;
+      if (baseline) {
+        setDocumentAppSettings(baseline.appSettings);
+        setDocumentDesignMode(baseline.designMode);
+      }
+
+      settingsPreviewBaselineRef.current = null;
       setIsSettingsDialogOpen(false);
       setIsResetAppDialogOpen(false);
       setIsFeedbackDialogOpen(false);
       setIsSubmittingFeedback(false);
       setFeedbackValue("");
+      setFeedbackAttachment(null);
+      feedbackDropDepthRef.current = 0;
+      setIsFeedbackDropTarget(false);
       setFeedbackStatus(null);
+      if (feedbackFileInputRef.current) {
+        feedbackFileInputRef.current.value = "";
+      }
     };
 
     document.addEventListener("keydown", onKeyDown);
@@ -1450,7 +1567,7 @@ export default function Home() {
   async function downloadBackup() {
     const data = serializeAppBackupFile({
       notes: latestNotesRef.current,
-      stickerPacks: await loadStickerPacks(),
+      stickers: await loadStickers(),
       appSettings: getStoredAppSettings(),
       designMode: getStoredDesignMode(),
     });
@@ -1613,13 +1730,45 @@ export default function Home() {
               </button>
             ) : null}
           </div>
-          {availableUpdate ? (
+          {isDesktopApp && showDesktopUpdateBadge ? (
+            <button
+              className={"appUpdateBadge" + (isDesktopUpdateBusy ? " appUpdateBadgeBusy" : "")}
+              type="button"
+              onClick={handleDesktopUpdateAction}
+              disabled={isDesktopUpdateBusy}
+              title={desktopUpdateBadgeTitle}
+              aria-label={desktopUpdateBadgeTitle}
+            >
+              <span className="appUpdateBadgeIcon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none">
+                  {desktopUpdateState?.kind === "downloaded" ? (
+                    <path
+                      d="M7 12L11 16L17 8M5 20h14"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  ) : (
+                    <path
+                      d="M12 4v10m0 0 4-4m-4 4-4-4M5 18h14"
+                      stroke="currentColor"
+                      strokeWidth="1.9"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  )}
+                </svg>
+              </span>
+              <span className="appUpdateBadgeText">{desktopUpdateBadgeText}</span>
+            </button>
+          ) : availableUpdate ? (
             <a
               className="appUpdateBadge"
               href={availableUpdate.downloadUrl}
               target="_blank"
               rel="noopener noreferrer"
-                title={`Scarica aggiornamento ${formatDisplayVersion(availableUpdate.version)}`}
+              title={`Scarica aggiornamento ${formatDisplayVersion(availableUpdate.version)}`}
               aria-label={`Nuova versione disponibile ${formatDisplayVersion(availableUpdate.version)}. Scarica aggiornamento.`}
             >
               <span className="appUpdateBadgeIcon" aria-hidden="true">
@@ -1646,6 +1795,24 @@ export default function Home() {
             aria-label="Impostazioni"
           >
             <span className="appHeaderSettingsIcon" aria-hidden="true" />
+          </button>
+          <button
+            className={"btn appHeaderHistoryBtn" + (showArchived ? " active" : "")}
+            onClick={() => setShowArchived((prev) => !prev)}
+            type="button"
+            title={showArchived ? "Torna alle note attive" : "Archivio"}
+            aria-label={showArchived ? "Torna alle note attive" : "Archivio"}
+            aria-pressed={showArchived}
+          >
+            <svg className="undoRedoIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path
+                d="M4 7h16l-1.5 11a2 2 0 0 1-2 1.7H7.5a2 2 0 0 1-2-1.7L4 7Zm0-3h16v3H4V4Zm5 7h6"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
           </button>
           <button
             className="btn appHeaderHistoryBtn"
@@ -1696,8 +1863,9 @@ export default function Home() {
         </div>
       </div>
 
-      <div className="shell">
+      <div className={"shell" + (designMode === "v103b" && isTagPickerOpen ? " shellTagPickerOpen" : "")}>
         <NoteList
+          key={showArchived ? "archived" : "active"}
           designMode={designMode}
           notes={filtered}
           activeId={activeNoteId}
@@ -1711,9 +1879,7 @@ export default function Home() {
           onSelectTag={setSelectedTag}
           onSelect={selectNote}
           onNew={newNote}
-          onOpenArchived={() => setShowArchived(true)}
           onCloseArchived={() => setShowArchived(false)}
-          onExport={downloadBackup}
           onImport={importBackup}
           onExportOne={downloadSingleNote}
           onPrint={requestPrint}
@@ -1721,6 +1887,7 @@ export default function Home() {
           onTogglePin={togglePin}
           onToggleArchive={toggleArchive}
           onDelete={deleteNote}
+          onTagPickerOpenChange={setIsTagPickerOpen}
         />
 
         <div className="editorLayout">
@@ -1736,6 +1903,7 @@ export default function Home() {
                   showColoredTextHighlights={appSettings.showColoredTextHighlights}
                   moveCompletedChecklistItemsToBottom={appSettings.moveCompletedChecklistItemsToBottom}
                   showMathResultsPreview={appSettings.showMathResultsPreview}
+                  whitePaperMode={appSettings.whitePaperMode}
                   onChangeDoc={(d) => updateActive({ doc: d, title: titleFromDoc(d) })}
                   onDeleteNote={() => {
                     void deleteNote(active.id);
@@ -1805,7 +1973,12 @@ export default function Home() {
                   ) : null}
                   {!showArchived ? (
                     <div className="emptySelectionActions">
-                      <button className="btn primary" onClick={newNote} type="button">+ Nuova nota</button>
+                      <button className="btn primary" onClick={newNote} type="button">
+                        <span className="newNoteIcon" aria-hidden="true">
+                          <PencilCircleIcon />
+                        </span>
+                        Nuova nota
+                      </button>
                     </div>
                   ) : null}
                 </div>
@@ -1819,15 +1992,19 @@ export default function Home() {
                 aria-live="polite"
               >
                 <span className="shellToastOverlayIcon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M11.9999 17V21M6.9999 12.6667V6C6.9999 4.89543 7.89533 4 8.9999 4H14.9999C16.1045 4 16.9999 4.89543 16.9999 6V12.6667L18.9135 15.4308C19.3727 16.094 18.898 17 18.0913 17H5.90847C5.1018 17 4.62711 16.094 5.08627 15.4308L6.9999 12.6667Z"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  {pinLimitNoticeIcon === "favorite" ? (
+                    <StarIcon />
+                  ) : (
+                    <svg viewBox="0 0 24 24" fill="none">
+                      <path
+                        d="M11.9999 17V21M6.9999 12.6667V6C6.9999 4.89543 7.89533 4 8.9999 4H14.9999C16.1045 4 16.9999 4.89543 16.9999 6V12.6667L18.9135 15.4308C19.3727 16.094 18.898 17 18.0913 17H5.90847C5.1018 17 4.62711 16.094 5.08627 15.4308L6.9999 12.6667Z"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
                 </span>
                 <span>{pinLimitNotice}</span>
               </div>
@@ -1836,10 +2013,11 @@ export default function Home() {
 
           <div className="customEmojiSidebar">
             <StickerPackPicker
-              onPick={(src) => {
+              onPick={(sticker) => {
                 if (!insertCustomEmojiFn.current) return;
-                insertCustomEmojiFn.current(src);
+                insertCustomEmojiFn.current(sticker);
               }}
+              onShowNotice={showPinLimitNotice}
             />
             <div className="appSignature" aria-label="Versione applicazione">
               <div className="appSignatureVersion">{appDisplayName} Ver. {formatDisplayVersion(appVersion)}</div>
@@ -1954,316 +2132,45 @@ export default function Home() {
         />
       ) : null}
 
-      {isSettingsDialogOpen ? (
-        <div
-          className="editorOverlay"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeSettingsDialog();
-            }
-          }}
-        >
-          <form
-            className="linkDialog settingsDialog"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="settings-dialog-title"
-            onMouseDown={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              saveSettingsDialog();
-            }}
-          >
-            <div className="linkDialogTitle" id="settings-dialog-title">Impostazioni</div>
-            <div className="settingsDialogText">
-              Personalizza il nome mostrato nell&apos;app e scegli design e tema.
-            </div>
-            <div className="settingsDialogControls">
-              <label className="linkDialogField">
-                <span className="linkDialogLabel linkDialogLabelWithIcon">
-                  <span className="linkDialogLabelIcon" aria-hidden="true">
-                    <NotesTagIcon />
-                  </span>
-                  <span>Il tuo nome</span>
-                </span>
-                <input
-                  ref={settingsInputRef}
-                  className="linkDialogInput"
-                  value={settingsNameValue}
-                  onChange={(event) => setSettingsNameValue(event.target.value.slice(0, 24))}
-                  placeholder="Inserisci il tuo nome"
-                  spellCheck={false}
-                  maxLength={24}
-                />
-              </label>
-              <div className="settingsTabs" role="tablist" aria-label="Categorie impostazioni">
-                <button
-                  className={"settingsTabButton" + (settingsActiveTab === "notes" ? " active" : "")}
-                  type="button"
-                  role="tab"
-                  id="settings-tab-notes"
-                  aria-selected={settingsActiveTab === "notes"}
-                  aria-controls="settings-panel-notes"
-                  onClick={() => setSettingsActiveTab("notes")}
-                >
-                  Note
-                </button>
-                <button
-                  className={"settingsTabButton" + (settingsActiveTab === "design" ? " active" : "")}
-                  type="button"
-                  role="tab"
-                  id="settings-tab-design"
-                  aria-selected={settingsActiveTab === "design"}
-                  aria-controls="settings-panel-design"
-                  onClick={() => setSettingsActiveTab("design")}
-                >
-                  Design
-                </button>
-                <button
-                  className={"settingsTabButton" + (settingsActiveTab === "user" ? " active" : "")}
-                  type="button"
-                  role="tab"
-                  id="settings-tab-user"
-                  aria-selected={settingsActiveTab === "user"}
-                  aria-controls="settings-panel-user"
-                  onClick={() => setSettingsActiveTab("user")}
-                >
-                  App
-                </button>
-              </div>
-            </div>
-            <OverlayScrollArea
-              className="settingsDialogScroll"
-              viewportClassName="settingsDialogScrollViewport"
-              contentClassName="settingsDialogScrollContent"
-            >
-              {settingsActiveTab === "notes" ? (
-                <section
-                  className="settingsCategoryCard settingsTabPanel"
-                  id="settings-panel-notes"
-                  role="tabpanel"
-                  aria-labelledby="settings-tab-notes"
-                >
-                <div className="settingsCategoryBody">
-                  <div className="linkDialogField">
-                    <span className="linkDialogLabel linkDialogLabelWithIcon">
-                      <span className="linkDialogLabelIcon" aria-hidden="true">
-                        <TextHighlightSettingsIcon />
-                      </span>
-                      <span>Evidenziatore</span>
-                    </span>
-                    <button
-                      className={"settingsToggleOption" + (settingsShowColoredTextHighlightsValue ? " active" : "")}
-                      type="button"
-                      aria-pressed={settingsShowColoredTextHighlightsValue}
-                      onClick={() => {
-                        setSettingsShowColoredTextHighlightsValue((prev) => !prev);
-                      }}
-                    >
-                      <span className="settingsToggleOptionText">
-                        <span className="settingsToggleOptionTitle">Evidenzia il testo</span>
-                        <span className="settingsToggleOptionMeta">
-                          Mostra uno sfondo colorato sotto il testo usando il colore selezionato.
-                        </span>
-                      </span>
-                      <span className="settingsToggleSwitch" aria-hidden="true">
-                        <span className="settingsToggleKnob" />
-                      </span>
-                    </button>
-                  </div>
-                  <div className="linkDialogField">
-                    <span className="linkDialogLabel linkDialogLabelWithIcon">
-                      <span className="linkDialogLabelIcon" aria-hidden="true">
-                        <ChecklistSettingsIcon />
-                      </span>
-                      <span>Checklist:</span>
-                    </span>
-                    <button
-                      className={"settingsToggleOption" + (settingsMoveCompletedChecklistItemsToBottomValue ? " active" : "")}
-                      type="button"
-                      aria-pressed={settingsMoveCompletedChecklistItemsToBottomValue}
-                      onClick={() => {
-                        setSettingsMoveCompletedChecklistItemsToBottomValue((prev) => !prev);
-                      }}
-                    >
-                      <span className="settingsToggleOptionText">
-                        <span className="settingsToggleOptionTitle">Ordinamento automatico</span>
-                        <span className="settingsToggleOptionMeta">
-                          Quando attivo, le attivitÃ  completate vengono spostate automaticamente in fondo alla lista.
-                        </span>
-                      </span>
-                      <span className="settingsToggleSwitch" aria-hidden="true">
-                        <span className="settingsToggleKnob" />
-                      </span>
-                    </button>
-                  </div>
-                  <div className="linkDialogField">
-                    <span className="linkDialogLabel linkDialogLabelWithIcon">
-                      <span className="linkDialogLabelIcon" aria-hidden="true">
-                        <MathResultsIcon />
-                      </span>
-                      <span>Risultati matematici</span>
-                    </span>
-                    <button
-                      className={"settingsToggleOption" + (settingsShowMathResultsPreviewValue ? " active" : "")}
-                      type="button"
-                      aria-pressed={settingsShowMathResultsPreviewValue}
-                      onClick={() => {
-                        setSettingsShowMathResultsPreviewValue((prev) => !prev);
-                      }}
-                    >
-                      <span className="settingsToggleOptionText">
-                        <span className="settingsToggleOptionTitle">Anteprima automatica</span>
-                        <span className="settingsToggleOptionMeta">
-                          Mostra automaticamente l&apos;anteprima dei risultati dei calcoli. Premi Invio per confermare.
-                        </span>
-                      </span>
-                      <span className="settingsToggleSwitch" aria-hidden="true">
-                        <span className="settingsToggleKnob" />
-                      </span>
-                    </button>
-                  </div>
-                </div>
-                </section>
-              ) : null}
-              {settingsActiveTab === "design" ? (
-                <section
-                  className="settingsCategoryCard settingsTabPanel"
-                  id="settings-panel-design"
-                  role="tabpanel"
-                  aria-labelledby="settings-tab-design"
-                >
-                <div className="settingsCategoryBody">
-                  <div className="linkDialogField">
-                    <span className="linkDialogLabel linkDialogLabelWithIcon">
-                      <span className="linkDialogLabelIcon" aria-hidden="true">
-                        <DesignModeIcon />
-                      </span>
-                      <span>Stile</span>
-                    </span>
-                    <div className="designModeChoiceGrid" role="radiogroup" aria-label="Design app">
-                      <DesignModeOption
-                        mode="classic"
-                        selected={settingsDesignValue === "classic"}
-                        title="Classico"
-                        description="Pannelli separati con look piu marcato."
-                        onSelect={setSettingsDesignValue}
-                      />
-                      <DesignModeOption
-                        mode="v103b"
-                        selected={settingsDesignValue === "v103b"}
-                        title="Moderno"
-                        description="Layout piu essenziale con toolbar centrale."
-                        onSelect={setSettingsDesignValue}
-                      />
-                    </div>
-                  </div>
-                  <div className="linkDialogField">
-                    <button
-                      className={"settingsToggleOption" + (settingsShowPersistentDesignSwitcherValue ? " active" : "")}
-                      type="button"
-                      aria-pressed={settingsShowPersistentDesignSwitcherValue}
-                      onClick={() => {
-                        setSettingsShowPersistentDesignSwitcherValue((prev) => !prev);
-                      }}
-                    >
-                      <span className="settingsToggleOptionText">
-                        <span className="settingsToggleOptionTitle">Pulsante Stile sempre visibile</span>
-                        <span className="settingsToggleOptionMeta">
-                          Rende il pulsante Stile sempre visibile, affianco al tuo nome.
-                        </span>
-                      </span>
-                      <span className="settingsToggleSwitch" aria-hidden="true">
-                        <span className="settingsToggleKnob" />
-                      </span>
-                    </button>
-                  </div>
-                  <div className="linkDialogField">
-                    <span className="linkDialogLabel linkDialogLabelWithIcon">
-                      <span className="linkDialogLabelIcon" aria-hidden="true">
-                        <ThemePaletteIcon />
-                      </span>
-                      <span>Tema</span>
-                    </span>
-                    <div className="settingsThemeGrid" role="radiogroup" aria-label="Tema app">
-                      {APP_THEME_OPTIONS.map((themeOption) => (
-                        <button
-                          key={themeOption.value}
-                          className={"settingsThemeOption" + (settingsThemeValue === themeOption.value ? " active" : "")}
-                          type="button"
-                          role="radio"
-                          data-theme={themeOption.value}
-                          aria-checked={settingsThemeValue === themeOption.value}
-                          aria-label={themeOption.label}
-                          title={themeOption.label}
-                          onClick={() => setSettingsThemeValue(themeOption.value)}
-                        >
-                          <span className="settingsThemeSwatch" data-theme={themeOption.value} aria-hidden="true" />
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-                </section>
-              ) : null}
-              {settingsActiveTab === "user" ? (
-                <section
-                  className="settingsCategoryCard settingsTabPanel"
-                  id="settings-panel-user"
-                  role="tabpanel"
-                  aria-labelledby="settings-tab-user"
-                >
-                <div className="settingsCategoryBody">
-                  <div className="settingsInfoCard">
-                    <div className="settingsInfoCardHeader">
-                      <span className="settingsInfoCardIcon" aria-hidden="true">
-                        <FeedbackIcon />
-                      </span>
-                      <span className="settingsInfoCardTitle">Hai dei suggerimenti?</span>
-                    </div>
-                    <div className="settingsInfoCardText">
-                      Scrivili qua sotto!
-                    </div>
-                    <button
-                      className="settingsActionButton"
-                      type="button"
-                      onClick={openFeedbackDialog}
-                    >
-                      Scrivi feedback
-                    </button>
-                  </div>
-                  <button
-                    className="settingsResetButton"
-                    type="button"
-                    onClick={openResetAppDialog}
-                  >
-                    <span className="settingsResetButtonIcon" aria-hidden="true">
-                      <SettingsResetIcon />
-                    </span>
-                    <span>Inizializza app</span>
-                  </button>
-                </div>
-                </section>
-              ) : null}
-            </OverlayScrollArea>
-            <div className="linkDialogActions tagManageActions settingsDialogActions">
-              <button
-                className="linkDialogButton"
-                type="button"
-                onClick={closeSettingsDialog}
-              >
-                Annulla
-              </button>
-              <button
-                className="linkDialogButton linkDialogButtonPrimary"
-                type="submit"
-              >
-                Salva
-              </button>
-            </div>
-          </form>
-        </div>
-      ) : null}
+      <SettingsDialog
+        activeTab={settingsActiveTab}
+        designValue={settingsDesignValue}
+        isOpen={isSettingsDialogOpen}
+        moveCompletedChecklistItemsToBottom={settingsMoveCompletedChecklistItemsToBottomValue}
+        nameInputRef={settingsInputRef}
+        nameValue={settingsNameValue}
+        onActiveTabChange={setSettingsActiveTab}
+        onClose={closeSettingsDialog}
+        onDesignChange={setSettingsDesignValue}
+        onDownloadBackup={() => {
+          void downloadBackup();
+        }}
+        onNameChange={setSettingsNameValue}
+        onOpenFeedback={openFeedbackDialog}
+        onOpenReset={openResetAppDialog}
+        onSubmit={saveSettingsDialog}
+        onThemeChange={setSettingsThemeValue}
+        onToggleMoveCompletedChecklistItemsToBottom={() => {
+          setSettingsMoveCompletedChecklistItemsToBottomValue((prev) => !prev);
+        }}
+        onToggleShowColoredTextHighlights={() => {
+          setSettingsShowColoredTextHighlightsValue((prev) => !prev);
+        }}
+        onToggleShowMathResultsPreview={() => {
+          setSettingsShowMathResultsPreviewValue((prev) => !prev);
+        }}
+        onToggleShowPersistentDesignSwitcher={() => {
+          setSettingsShowPersistentDesignSwitcherValue((prev) => !prev);
+        }}
+        onToggleWhitePaperMode={() => {
+          setSettingsWhitePaperModeValue((prev) => !prev);
+        }}
+        showColoredTextHighlights={settingsShowColoredTextHighlightsValue}
+        showMathResultsPreview={settingsShowMathResultsPreviewValue}
+        showPersistentDesignSwitcher={settingsShowPersistentDesignSwitcherValue}
+        themeValue={settingsThemeValue}
+        whitePaperMode={settingsWhitePaperModeValue}
+      />
 
       {isResetAppDialogOpen ? (
         <ResetAppDialog

@@ -20,6 +20,7 @@ const NOTE_FILE_EXTENSION = ".nby";
 const NOTE_FILE_PROG_ID = "NoteDiJaco.NoteFile";
 const NOTE_FILE_DESCRIPTION = "Nota Note by Jaco";
 const APP_SETTINGS_STORAGE_KEY = "note_di_jaco_app_settings_v1";
+const DESKTOP_UPDATE_EVENT = "desktop:update-state";
 
 let mainWindow = null;
 let server = null;
@@ -27,6 +28,269 @@ let nextApp = null;
 const previewWindows = new Set();
 let desktopStorageCache = null;
 let pendingNoteFilePayloads = [];
+let autoUpdater = null;
+let isAutoUpdaterInitialized = false;
+let isUpdateCheckInFlight = false;
+let isUpdateDownloadInFlight = false;
+let trackedUpdateVersion = "";
+
+function getAppReleaseChannel(version = app.getVersion()) {
+  const match = String(version || "")
+    .trim()
+    .match(/-([0-9A-Za-z-]+?)(?:[.+]|$)/);
+
+  if (!match) return "latest";
+  return match[1].toLowerCase();
+}
+
+function isDesktopAutoUpdateSupported() {
+  return app.isPackaged && (process.platform === "win32" || process.platform === "darwin");
+}
+
+function buildDesktopUpdateState(kind, extra = {}) {
+  return {
+    kind,
+    currentVersion: app.getVersion(),
+    availableVersion: typeof extra.availableVersion === "string" ? extra.availableVersion : "",
+    progressPercent: typeof extra.progressPercent === "number" ? extra.progressPercent : 0,
+    error: typeof extra.error === "string" ? extra.error : "",
+  };
+}
+
+let desktopUpdateState = buildDesktopUpdateState(isDesktopAutoUpdateSupported() ? "idle" : "unsupported");
+
+function emitDesktopUpdateState() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+
+  try {
+    mainWindow.webContents.send(DESKTOP_UPDATE_EVENT, cloneStructuredValue(desktopUpdateState));
+  } catch (error) {
+    logDesktop("desktop update event send failed", error);
+  }
+}
+
+function setDesktopUpdateState(kind, extra = {}) {
+  desktopUpdateState = buildDesktopUpdateState(kind, extra);
+  emitDesktopUpdateState();
+  return desktopUpdateState;
+}
+
+function getDesktopUpdateStateSnapshot() {
+  return cloneStructuredValue(desktopUpdateState);
+}
+
+function getAutoUpdater() {
+  if (!isDesktopAutoUpdateSupported()) {
+    setDesktopUpdateState("unsupported");
+    return null;
+  }
+
+  if (autoUpdater) {
+    return autoUpdater;
+  }
+
+  try {
+    const { autoUpdater: electronAutoUpdater } = require("electron-updater");
+    autoUpdater = electronAutoUpdater;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Impossibile caricare il modulo aggiornamenti.";
+    logDesktop("auto updater load failed", error);
+    setDesktopUpdateState("error", { error: message, availableVersion: trackedUpdateVersion });
+    return null;
+  }
+
+  const releaseChannel = getAppReleaseChannel();
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = releaseChannel !== "latest";
+
+  if (releaseChannel !== "latest") {
+    autoUpdater.channel = releaseChannel;
+  }
+
+  if (!isAutoUpdaterInitialized) {
+    autoUpdater.on("checking-for-update", () => {
+      isUpdateCheckInFlight = true;
+      setDesktopUpdateState("checking", { availableVersion: trackedUpdateVersion });
+    });
+
+    autoUpdater.on("update-available", (updateInfo) => {
+      isUpdateCheckInFlight = false;
+      trackedUpdateVersion = typeof updateInfo?.version === "string" ? updateInfo.version.trim() : "";
+      setDesktopUpdateState("available", { availableVersion: trackedUpdateVersion });
+    });
+
+    autoUpdater.on("update-not-available", () => {
+      isUpdateCheckInFlight = false;
+      trackedUpdateVersion = "";
+
+      if (!isUpdateDownloadInFlight) {
+        setDesktopUpdateState("idle");
+      }
+    });
+
+    autoUpdater.on("download-progress", (progressInfo) => {
+      isUpdateDownloadInFlight = true;
+      const progressPercent = typeof progressInfo?.percent === "number" ? progressInfo.percent : 0;
+      setDesktopUpdateState("downloading", {
+        availableVersion: trackedUpdateVersion,
+        progressPercent,
+      });
+    });
+
+    autoUpdater.on("update-downloaded", (updateInfo) => {
+      isUpdateDownloadInFlight = false;
+      trackedUpdateVersion = typeof updateInfo?.version === "string" ? updateInfo.version.trim() : trackedUpdateVersion;
+      setDesktopUpdateState("downloaded", {
+        availableVersion: trackedUpdateVersion,
+        progressPercent: 100,
+      });
+    });
+
+    autoUpdater.on("error", (error) => {
+      isUpdateCheckInFlight = false;
+      isUpdateDownloadInFlight = false;
+      const message = error instanceof Error ? error.message : "Errore sconosciuto durante l'aggiornamento.";
+      logDesktop("auto update error", { trackedUpdateVersion }, error);
+      setDesktopUpdateState("error", {
+        availableVersion: trackedUpdateVersion,
+        error: message,
+      });
+    });
+
+    isAutoUpdaterInitialized = true;
+  }
+
+  return autoUpdater;
+}
+
+async function checkForDesktopUpdates() {
+  const updater = getAutoUpdater();
+  if (!updater) {
+    return {
+      ok: false,
+      error: desktopUpdateState.error || "Aggiornamenti automatici non disponibili.",
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  if (isUpdateCheckInFlight || isUpdateDownloadInFlight) {
+    return {
+      ok: true,
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  try {
+    isUpdateCheckInFlight = true;
+    setDesktopUpdateState("checking", { availableVersion: trackedUpdateVersion });
+    await updater.checkForUpdates();
+    return {
+      ok: true,
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  } catch (error) {
+    isUpdateCheckInFlight = false;
+    const message = error instanceof Error ? error.message : "Errore sconosciuto durante il controllo update.";
+    logDesktop("auto update check failed", error);
+    setDesktopUpdateState("error", {
+      availableVersion: trackedUpdateVersion,
+      error: message,
+    });
+    return {
+      ok: false,
+      error: message,
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+}
+
+function downloadDesktopUpdate() {
+  const updater = getAutoUpdater();
+  if (!updater) {
+    return {
+      ok: false,
+      error: desktopUpdateState.error || "Aggiornamenti automatici non disponibili.",
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  if (desktopUpdateState.kind === "downloaded" || isUpdateDownloadInFlight) {
+    return {
+      ok: true,
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  if (desktopUpdateState.kind !== "available" && desktopUpdateState.kind !== "error") {
+    return {
+      ok: false,
+      error: "Nessun aggiornamento disponibile da scaricare.",
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  isUpdateDownloadInFlight = true;
+  setDesktopUpdateState("downloading", {
+    availableVersion: trackedUpdateVersion,
+    progressPercent: desktopUpdateState.progressPercent,
+  });
+
+  const downloadPromise = updater.downloadUpdate();
+  if (downloadPromise && typeof downloadPromise.catch === "function") {
+    downloadPromise.catch((error) => {
+      isUpdateDownloadInFlight = false;
+      const message = error instanceof Error ? error.message : "Errore sconosciuto durante il download update.";
+      logDesktop("auto update download failed", error);
+      setDesktopUpdateState("error", {
+        availableVersion: trackedUpdateVersion,
+        error: message,
+      });
+    });
+  }
+
+  return {
+    ok: true,
+    state: getDesktopUpdateStateSnapshot(),
+  };
+}
+
+function installDesktopUpdate() {
+  const updater = getAutoUpdater();
+  if (!updater) {
+    return {
+      ok: false,
+      error: desktopUpdateState.error || "Aggiornamenti automatici non disponibili.",
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  if (desktopUpdateState.kind !== "downloaded") {
+    return {
+      ok: false,
+      error: "L'aggiornamento non e ancora pronto per l'installazione.",
+      state: getDesktopUpdateStateSnapshot(),
+    };
+  }
+
+  setImmediate(() => {
+    try {
+      updater.quitAndInstall(false, true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Errore sconosciuto durante l'installazione.";
+      logDesktop("auto update install failed", error);
+      setDesktopUpdateState("error", {
+        availableVersion: trackedUpdateVersion,
+        error: message,
+      });
+    }
+  });
+
+  return {
+    ok: true,
+    state: getDesktopUpdateStateSnapshot(),
+  };
+}
 
 function parseEnvFile(rawContent) {
   const entries = {};
@@ -665,6 +929,22 @@ ipcMain.handle("desktop:open-print-preview", async () => {
   }
 });
 
+ipcMain.handle("desktop-update:get-state", async () => {
+  return getDesktopUpdateStateSnapshot();
+});
+
+ipcMain.handle("desktop-update:check", async () => {
+  return checkForDesktopUpdates();
+});
+
+ipcMain.handle("desktop-update:download", async () => {
+  return downloadDesktopUpdate();
+});
+
+ipcMain.handle("desktop-update:install", async () => {
+  return installDesktopUpdate();
+});
+
 ipcMain.handle("desktop-note-file:save-to-desktop", async (_event, payload) => {
   const content = typeof payload?.content === "string" ? payload.content : "";
   const fileName = typeof payload?.fileName === "string" ? payload.fileName : "";
@@ -745,6 +1025,7 @@ if (!gotSingleInstanceLock) {
 
   app.whenReady().then(async () => {
     await createWindow();
+    getAutoUpdater();
     const startupNoteFilePaths = extractNoteFilePathsFromArgv(process.argv);
     for (const filePath of startupNoteFilePaths) {
       openNoteFileFromPath(filePath);

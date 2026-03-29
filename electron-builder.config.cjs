@@ -29,6 +29,17 @@ function formatDisplayVersion(version) {
     .replace(/-beta(?:\.\d+)?$/i, "b");
 }
 
+function getReleaseChannel(version) {
+  const match = String(version || "1.0.0")
+    .trim()
+    .match(/-([0-9A-Za-z-]+?)(?:[.+]|$)/);
+
+  if (!match) return "latest";
+
+  const normalizedChannel = match[1].toLowerCase();
+  return normalizedChannel === "stable" ? "latest" : normalizedChannel;
+}
+
 function getAzureSignOptions() {
   const publisherName = getEnv("AZURE_TRUSTED_SIGNING_PUBLISHER_NAME");
   const endpoint = getEnv("AZURE_TRUSTED_SIGNING_ENDPOINT");
@@ -57,6 +68,27 @@ function hasWindowsSigningConfig() {
   );
 }
 
+function getGithubPublishConfig(version) {
+  const channel = getEnv("GH_RELEASE_CHANNEL") || getReleaseChannel(version);
+  const publishConfig = {
+    provider: "github",
+    owner: getEnv("GH_RELEASE_OWNER") || "jacofrau",
+    repo: getEnv("GH_RELEASE_REPO") || "Note",
+    releaseType: getEnv("GH_RELEASE_TYPE") || "draft",
+    vPrefixedTagName: true,
+  };
+
+  if (channel && channel !== "latest") {
+    publishConfig.channel = channel;
+  }
+
+  if (getEnv("GH_RELEASE_PRIVATE") === "true") {
+    publishConfig.private = true;
+  }
+
+  return publishConfig;
+}
+
 const baseBuild = packageJson.build || {};
 const baseWin = baseBuild.win || {};
 const baseMac = baseBuild.mac || {};
@@ -64,11 +96,19 @@ const azureSignOptions = getAzureSignOptions();
 const hasWindowsSigning = hasWindowsSigningConfig() || Boolean(azureSignOptions);
 const numericBuildVersion = getNumericBuildVersion(packageJson.version);
 const displayVersion = formatDisplayVersion(packageJson.version);
+const releaseChannel = getReleaseChannel(packageJson.version);
 const productName = String(baseBuild.productName || packageJson.productName || packageJson.name || "Note");
+const githubPublishConfig = getGithubPublishConfig(packageJson.version);
 
 module.exports = {
   ...baseBuild,
   buildVersion: numericBuildVersion,
+  electronUpdaterCompatibility: baseBuild.electronUpdaterCompatibility || ">=2.16",
+  generateUpdatesFilesForAllChannels:
+    typeof baseBuild.generateUpdatesFilesForAllChannels === "boolean"
+      ? baseBuild.generateUpdatesFilesForAllChannels
+      : releaseChannel !== "latest",
+  publish: baseBuild.publish || githubPublishConfig,
   win: {
     ...baseWin,
     artifactName: `${productName}-Setup-${displayVersion}-\${arch}.\${ext}`,

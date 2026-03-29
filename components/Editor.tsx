@@ -24,8 +24,10 @@ import { Plugin, TextSelection, type EditorState } from "@tiptap/pm/state";
 import { ReplaceAroundStep, canJoin, liftTarget } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { DesignMode } from "@/lib/designMode";
+import { getStickerDisplaySource } from "@/lib/stickers";
 import type { NoteDoc } from "@/lib/types";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
+import { PencilCircleIcon } from "@/components/AppIcons";
 
 declare module "@tiptap/core" {
   interface Commands<ReturnType> {
@@ -56,6 +58,23 @@ const InlineCustomEmoji = Image.extend({
       HTMLAttributes: {
         ...(parentOptions?.HTMLAttributes ?? {}),
         class: "inline-custom-emoji",
+        draggable: "false",
+      },
+    };
+  },
+  draggable: false,
+  selectable: false,
+  addAttributes() {
+    return {
+      ...this.parent?.(),
+      stickerBorder: {
+        default: false,
+        parseHTML: (element) => element.getAttribute("data-sticker-border") === "true",
+        renderHTML: (attributes) => (
+          attributes.stickerBorder
+            ? { "data-sticker-border": "true" }
+            : {}
+        ),
       },
     };
   },
@@ -937,6 +956,8 @@ const COLORS = [
 const LIST_SYMBOLS = ["-", "\u2022", "\u25E6", "\u25AA", "\u2192", "\u2937", "\u2713", "\u2605", "\u2726", "\u25C6"];
 const DEFAULT_LINE_HEIGHT = "1.55";
 const LINE_HEIGHT_OPTIONS = ["1", "1.2", "1.4", DEFAULT_LINE_HEIGHT, "1.8", "2"];
+const WHITE_TEXT_SWATCH = "#f2f2f7";
+const WHITE_PAPER_TEXT_SWATCH = "#111111";
 
 type EditorProps = {
   designMode: DesignMode;
@@ -946,10 +967,11 @@ type EditorProps = {
   showColoredTextHighlights: boolean;
   moveCompletedChecklistItemsToBottom: boolean;
   showMathResultsPreview: boolean;
+  whitePaperMode: boolean;
   onChangeDoc: (d: NoteDoc) => void;
   onDeleteNote: () => void;
   onNewNote: () => void;
-  onInsertCustomEmoji?: (insertFn: (src: string) => void) => void;
+  onInsertCustomEmoji?: (insertFn: (sticker: { src: string; hasBorder?: boolean }) => void) => void;
   onHistoryStateChange?: (state: { canUndo: boolean; canRedo: boolean; undo: () => void; redo: () => void } | null) => void;
 };
 
@@ -1018,20 +1040,7 @@ function TrashToolbarIcon() {
 }
 
 function NewNoteToolbarIcon() {
-  return (
-    <svg className="tableInsertIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M7 5C5.34315 5 4 6.34315 4 8V16C4 17.6569 5.34315 19 7 19H17C18.6569 19 20 17.6569 20 16V12.5C20 11.9477 20.4477 11.5 21 11.5C21.5523 11.5 22 11.9477 22 12.5V16C22 18.7614 19.7614 21 17 21H7C4.23858 21 2 18.7614 2 16V8C2 5.23858 4.23858 3 7 3H10.5C11.0523 3 11.5 3.44772 11.5 4C11.5 4.55228 11.0523 5 10.5 5H7Z"
-        fill="currentColor"
-      />
-      <path
-        fillRule="evenodd"
-        clipRule="evenodd"
-        d="M18.8431 3.58579C18.0621 2.80474 16.7957 2.80474 16.0147 3.58579L11.6806 7.91992L11.0148 11.9455C10.8917 12.6897 11.537 13.3342 12.281 13.21L16.3011 12.5394L20.6347 8.20582C21.4158 7.42477 21.4158 6.15844 20.6347 5.37739L18.8431 3.58579ZM13.1933 11.0302L13.5489 8.87995L17.4289 5L19.2205 6.7916L15.34 10.6721L13.1933 11.0302Z"
-        fill="currentColor"
-      />
-    </svg>
-  );
+  return <PencilCircleIcon className="tableInsertIcon" />;
 }
 
 type EditorModeButtonProps = {
@@ -1079,6 +1088,7 @@ export default function Editor({
   showColoredTextHighlights,
   moveCompletedChecklistItemsToBottom,
   showMathResultsPreview,
+  whitePaperMode,
   onChangeDoc,
   onDeleteNote,
   onNewNote,
@@ -1128,6 +1138,8 @@ export default function Editor({
         bulletList: false,
         orderedList: false,
         listItem: false,
+        link: false,
+        underline: false,
       }),
       Heading.configure({
         levels: [1, 2],
@@ -1175,6 +1187,17 @@ export default function Editor({
       attributes: {
         class: "tiptap",
       },
+      handleDOMEvents: {
+        dragstart: (_view, event) => {
+          const target = event.target;
+          if (!(target instanceof HTMLElement) || !target.matches("img.inline-custom-emoji")) {
+            return false;
+          }
+
+          event.preventDefault();
+          return true;
+        },
+      },
     },
     onUpdate({ editor }) {
       onChangeDoc(editor.getJSON());
@@ -1204,6 +1227,62 @@ export default function Editor({
 
   useEffect(() => {
     if (!editor) return;
+    let disposed = false;
+
+    void (async () => {
+      const pendingMigrations: Array<{ pos: number; nextSrc: string }> = [];
+
+      editor.state.doc.descendants((node, pos) => {
+        if (node.type.name !== "image") return;
+        if (node.attrs.stickerBorder !== true) return;
+        if (typeof node.attrs.src !== "string" || !node.attrs.src) return;
+
+        pendingMigrations.push({
+          pos,
+          nextSrc: node.attrs.src,
+        });
+      });
+
+      if (!pendingMigrations.length) return;
+
+      const resolved = await Promise.all(
+        pendingMigrations.map(async (entry) => ({
+          pos: entry.pos,
+          nextSrc: await getStickerDisplaySource(entry.nextSrc, true),
+        })),
+      );
+
+      if (disposed) return;
+
+      let tr = editor.state.tr;
+      let changed = false;
+
+      resolved.forEach(({ pos, nextSrc }) => {
+        const node = tr.doc.nodeAt(pos);
+        if (!node || node.type.name !== "image") return;
+        if (node.attrs.stickerBorder !== true) return;
+        if (typeof node.attrs.src !== "string" || !node.attrs.src) return;
+
+        tr = tr.setNodeMarkup(pos, undefined, {
+          ...node.attrs,
+          src: nextSrc,
+          stickerBorder: false,
+        });
+        changed = true;
+      });
+
+      if (changed) {
+        editor.view.dispatch(tr);
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [editor, noteId]);
+
+  useEffect(() => {
+    if (!editor) return;
 
     const normalizationTransaction = buildChecklistNormalizationTransaction(
       editor.state,
@@ -1227,9 +1306,24 @@ export default function Editor({
   }, [editor, showColoredTextHighlights]);
 
   useEffect(() => {
+    if (!editor) return;
+    editor.view.dom.classList.toggle("tiptapWhitePaperMode", whitePaperMode);
+  }, [editor, whitePaperMode]);
+
+  useEffect(() => {
     if (!editor || !onInsertCustomEmoji) return;
-    onInsertCustomEmoji((src: string) => {
-      editor.chain().focus().setImage({ src }).run();
+    onInsertCustomEmoji(({ src, hasBorder }) => {
+      editor
+        .chain()
+        .focus()
+        .insertContent({
+          type: "image",
+          attrs: {
+            src,
+            stickerBorder: hasBorder === true,
+          },
+        })
+        .run();
     });
   }, [editor, onInsertCustomEmoji]);
 
@@ -1674,13 +1768,17 @@ export default function Editor({
             <button
               key={c.value}
               className={"tool swatchTool" + (activeEditor.getAttributes("textStyle")?.color === c.value ? " active" : "")}
+              data-paper-white={whitePaperMode && c.value === WHITE_TEXT_SWATCH ? "true" : undefined}
               disabled={!can}
               onClick={() => applyCommand((chain) => chain.setColor(c.value))}
               type="button"
               title={c.name}
               aria-label={c.name}
             >
-              <span className="colorSwatch" style={{ background: c.value }} />
+              <span
+                className={"colorSwatch" + (whitePaperMode && c.value === WHITE_TEXT_SWATCH ? " isWhitePaperPreview" : "")}
+                style={{ background: whitePaperMode && c.value === WHITE_TEXT_SWATCH ? WHITE_PAPER_TEXT_SWATCH : c.value }}
+              />
             </button>
           ))}
         </div>
@@ -2145,92 +2243,94 @@ export default function Editor({
   }, [editor, hideBubble, updateBubbleAnchor, usesStaticToolbar]);
 
   return (
-    <div className="card">
+    <div className={"card" + (whitePaperMode ? " editorWhitePaperCard" : "")}>
       <div className="editorWrap">
         {usesStaticToolbar ? (
-          <div className="editorToolbarV103Shell">
-            <div
-              className="editorToolbarV103"
-              onMouseDown={(event) => {
-                const target = event.target as HTMLElement;
-                if (target.closest("input, select")) return;
-                event.preventDefault();
-              }}
-            >
-              <div className="editorToolbarV103Side editorToolbarV103SideLeft">
-                <button
-                  className="editorToolbarV103Button editorToolbarV103IconButton editorToolbarV103DangerButton"
-                  onClick={onDeleteNote}
-                  type="button"
-                  aria-label="Elimina nota"
-                  title="Elimina nota"
-                >
-                  <TrashToolbarIcon />
-                </button>
-              </div>
-              <div className="editorToolbarV103Cluster">
-                <EditorModeButton
-                  active={isFormatOpen}
-                  disabled={!can}
-                  icon={<TypeIcon />}
-                  label="Formato"
-                  onClick={toggleFormatPanel}
-                />
-                <EditorModeButton
-                  active={isStyleToolsOpen}
-                  disabled={!can}
-                  icon={<AdjustmentsIcon />}
-                  label="Elenco"
-                  onClick={toggleStyleToolsPanel}
-                />
-                <EditorModeButton
-                  active={showTablePanel}
-                  disabled={!can}
-                  icon={<TableInsertIcon />}
-                  label="Tabella"
-                  onClick={toggleTablePanel}
-                />
-              </div>
-              <div className="editorToolbarV103Side editorToolbarV103SideRight">
-                <button
-                  className="editorToolbarV103Button editorToolbarV103IconButton editorToolbarV103AccentButton"
-                  onClick={onNewNote}
-                  type="button"
-                  aria-label="Nuova nota"
-                  title="Nuova nota"
-                >
-                  <NewNoteToolbarIcon />
-                </button>
-              </div>
-            </div>
-
-            {isFormatOpen || isStyleToolsOpen || showTablePanel ? (
-              <div
-                className="editorToolbarV103Panels"
-                onMouseDown={(event) => {
-                  const target = event.target as HTMLElement;
-                  if (target.closest("input, select")) return;
-                  event.preventDefault();
-                }}
+          <>
+            <div className="editorToolbarV103EdgeActions">
+              <button
+                className="editorToolbarV103Button editorToolbarV103IconButton editorToolbarV103DangerButton editorToolbarV103EdgeAction"
+                onClick={onDeleteNote}
+                type="button"
+                aria-label="Elimina nota"
+                title="Elimina nota"
               >
-                {isFormatOpen ? (
-                  <div className="editorToolbarV103Panel">
-                    {formatPanelContent}
+                <TrashToolbarIcon />
+              </button>
+              <button
+                className="editorToolbarV103Button editorToolbarV103IconButton editorToolbarV103AccentButton editorToolbarV103EdgeAction"
+                onClick={onNewNote}
+                type="button"
+                aria-label="Nuova nota"
+                title="Nuova nota"
+              >
+                <NewNoteToolbarIcon />
+              </button>
+            </div>
+            <div className="editorToolbarV103Shell">
+              <div className="editorToolbarV103Bar">
+                <div
+                  className="editorToolbarV103"
+                  onMouseDown={(event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.closest("input, select")) return;
+                    event.preventDefault();
+                  }}
+                >
+                  <div className="editorToolbarV103Cluster">
+                    <EditorModeButton
+                      active={isFormatOpen}
+                      disabled={!can}
+                      icon={<TypeIcon />}
+                      label="Formato"
+                      onClick={toggleFormatPanel}
+                    />
+                    <EditorModeButton
+                      active={isStyleToolsOpen}
+                      disabled={!can}
+                      icon={<AdjustmentsIcon />}
+                      label="Elenco"
+                      onClick={toggleStyleToolsPanel}
+                    />
+                    <EditorModeButton
+                      active={showTablePanel}
+                      disabled={!can}
+                      icon={<TableInsertIcon />}
+                      label="Tabella"
+                      onClick={toggleTablePanel}
+                    />
                   </div>
-                ) : null}
-                {isStyleToolsOpen ? (
-                  <div className="editorToolbarV103Panel">
-                    {styleToolsPanelContent}
-                  </div>
-                ) : null}
-                {showTablePanel ? (
-                  <div className="editorToolbarV103Panel editorToolbarV103PanelWide">
-                    {tablePanelContent}
-                  </div>
-                ) : null}
+                </div>
               </div>
-            ) : null}
-          </div>
+
+              {isFormatOpen || isStyleToolsOpen || showTablePanel ? (
+                <div
+                  className="editorToolbarV103Panels"
+                  onMouseDown={(event) => {
+                    const target = event.target as HTMLElement;
+                    if (target.closest("input, select")) return;
+                    event.preventDefault();
+                  }}
+                >
+                  {isFormatOpen ? (
+                    <div className="editorToolbarV103Panel">
+                      {formatPanelContent}
+                    </div>
+                  ) : null}
+                  {isStyleToolsOpen ? (
+                    <div className="editorToolbarV103Panel">
+                      {styleToolsPanelContent}
+                    </div>
+                  ) : null}
+                  {showTablePanel ? (
+                    <div className="editorToolbarV103Panel editorToolbarV103PanelWide">
+                      {tablePanelContent}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </>
         ) : null}
 
         {showBubble && activeEditor ? (

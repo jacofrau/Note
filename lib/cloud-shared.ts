@@ -1,8 +1,8 @@
-import type { Note, StickerPack } from "./types";
+import type { Note, Sticker } from "./types";
 
 export type CloudState = {
   notes: Note[];
-  customEmojis: StickerPack[];
+  customEmojis: Sticker[];
   notesUpdatedAt: number;
   customEmojisUpdatedAt: number;
   updatedAt: number;
@@ -10,7 +10,7 @@ export type CloudState = {
 
 export type CloudStatePatch = {
   notes?: Note[];
-  customEmojis?: StickerPack[];
+  customEmojis?: Sticker[];
 };
 
 export function emptyCloudState(): CloudState {

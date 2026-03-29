@@ -88,8 +88,8 @@ function Draw-BrandSidebar([string]$path, [bool]$isUninstaller) {
   $pillBrush = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(38, $accent))
   $pillBorder = New-Object System.Drawing.Pen ([System.Drawing.Color]::FromArgb(96, $accentSoft), 1)
 
-  $graphics.DrawString("Note di Jaco", $titleFont, $mainBrush, 18, 88)
-  $subtitle = if ($isUninstaller) { "Rimozione guidata, stile pulito." } else { "Le tue note, sempre con te." }
+  $graphics.DrawString("Note by Jaco", $titleFont, $mainBrush, 18, 88)
+  $subtitle = if ($isUninstaller) { "Rimozione guidata" } else { "Le tue note, sempre con te." }
   $graphics.DrawString($subtitle, $subtitleFont, $mutedBrush, 18, 118)
 
   $pillPath = New-RoundedPath 18 160 78 24 12
@@ -140,7 +140,7 @@ function Draw-BrandHeader([string]$path) {
   $mainBrush = New-Object System.Drawing.SolidBrush $textMain
   $mutedBrush = New-Object System.Drawing.SolidBrush $textMuted
 
-  $graphics.DrawString("Note di Jaco", $titleFont, $mainBrush, 44, 10)
+  $graphics.DrawString("Note by Jaco", $titleFont, $mainBrush, 44, 10)
   $graphics.DrawString("Installer desktop", $subtitleFont, $mutedBrush, 45, 30)
 
   $gradient.Dispose()

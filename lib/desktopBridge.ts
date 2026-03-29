@@ -20,6 +20,20 @@ export type DesktopSaveNoteFileResult = {
   filePath?: string;
 };
 
+export type DesktopUpdateState = {
+  availableVersion: string;
+  currentVersion: string;
+  error: string;
+  kind: "unsupported" | "idle" | "checking" | "available" | "downloading" | "downloaded" | "error";
+  progressPercent: number;
+};
+
+export type DesktopUpdateActionResult = {
+  ok: boolean;
+  error?: string;
+  state?: DesktopUpdateState;
+};
+
 type DesktopStorageBridge = {
   getItemSync: (key: string) => unknown;
   getItem: (key: string) => Promise<unknown>;
@@ -34,8 +48,13 @@ declare global {
     noteDiJacoDesktop?: {
       platform?: string;
       openPrintPreview?: () => Promise<DesktopPrintPreviewResult>;
+      getUpdateState?: () => Promise<DesktopUpdateState>;
+      checkForUpdates?: () => Promise<DesktopUpdateActionResult>;
+      downloadUpdate?: () => Promise<DesktopUpdateActionResult>;
+      installUpdate?: () => Promise<DesktopUpdateActionResult>;
       onBeforeClose?: (listener: () => void) => (() => void) | void;
       onOpenNoteFile?: (listener: (payload: DesktopOpenNoteFilePayload) => void) => (() => void) | void;
+      onUpdateState?: (listener: (state: DesktopUpdateState) => void) => (() => void) | void;
       saveNoteFileToDesktop?: (payload: DesktopSaveNoteFileRequest) => Promise<DesktopSaveNoteFileResult>;
       storage?: DesktopStorageBridge;
     };
@@ -58,10 +77,86 @@ export function getDesktopPlatform(): string | null {
   return typeof platform === "string" && platform.trim() ? platform : null;
 }
 
+export async function getDesktopUpdateState(): Promise<DesktopUpdateState | null> {
+  if (typeof window === "undefined") return null;
+
+  const getState = window.noteDiJacoDesktop?.getUpdateState;
+  if (!getState) return null;
+
+  return getState();
+}
+
+export async function checkDesktopForUpdates() {
+  if (typeof window === "undefined") {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopUpdateActionResult;
+  }
+
+  const checkForUpdates = window.noteDiJacoDesktop?.checkForUpdates;
+  if (!checkForUpdates) {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopUpdateActionResult;
+  }
+
+  return checkForUpdates();
+}
+
+export async function downloadDesktopUpdate() {
+  if (typeof window === "undefined") {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopUpdateActionResult;
+  }
+
+  const downloadUpdate = window.noteDiJacoDesktop?.downloadUpdate;
+  if (!downloadUpdate) {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopUpdateActionResult;
+  }
+
+  return downloadUpdate();
+}
+
+export async function installDesktopUpdate() {
+  if (typeof window === "undefined") {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopUpdateActionResult;
+  }
+
+  const installUpdate = window.noteDiJacoDesktop?.installUpdate;
+  if (!installUpdate) {
+    return {
+      ok: false,
+      error: "Bridge desktop non disponibile.",
+    } satisfies DesktopUpdateActionResult;
+  }
+
+  return installUpdate();
+}
+
 export function subscribeDesktopOpenNoteFile(listener: (payload: DesktopOpenNoteFilePayload) => void) {
   if (typeof window === "undefined") return () => {};
 
   const subscribe = window.noteDiJacoDesktop?.onOpenNoteFile;
+  if (!subscribe) return () => {};
+
+  const unsubscribe = subscribe(listener);
+  return typeof unsubscribe === "function" ? unsubscribe : () => {};
+}
+
+export function subscribeDesktopUpdateState(listener: (state: DesktopUpdateState) => void) {
+  if (typeof window === "undefined") return () => {};
+
+  const subscribe = window.noteDiJacoDesktop?.onUpdateState;
   if (!subscribe) return () => {};
 
   const unsubscribe = subscribe(listener);

@@ -8,28 +8,16 @@ import {
   setDesktopStoredValue,
   setDesktopStoredValueSync,
 } from "./desktopBridge";
-import type { LegacyCustomEmoji, Note, Sticker, StickerPack } from "./types";
+import type { Note, Sticker, StickerPack } from "./types";
 import { normalizeCloudState, type CloudState } from "./cloud-shared";
 import { DEFAULT_STICKER_PACKS } from "./defaultStickerPacks";
 
 const KEY = "notes_v1";
 const LEGACY_CUSTOM_EMOJI_KEY = "custom_emoji_v1";
+const STICKER_LIBRARY_KEY = "stickers_v2";
 const STICKER_PACK_KEY = "sticker_packs_v1";
 const CLOUD_SYNC_ENABLED = process.env.NEXT_PUBLIC_ENABLE_CLOUD_SYNC === "true";
 const CLOUD_SYNC_ACCESS_KEY_STORAGE_KEY = "cloud_sync_access_key_v1";
-
-const LEGACY_STICKER_PACK_TITLES = new Map<string, string>([
-  ["smiley-persone", "Smiley e Persone"],
-  ["animali-natura", "Animali e Natura"],
-  ["cibo-bevande", "Cibo e Bevande"],
-  ["attivita-sport", "Attivita / Sport"],
-  ["viaggi-luoghi", "Viaggi e Luoghi"],
-  ["oggetto", "Oggetti"],
-  ["simboli", "Simboli"],
-  ["bandiere", "Bandiere"],
-]);
-
-const LEGACY_STICKER_PACK_ORDER = Array.from(LEGACY_STICKER_PACK_TITLES.keys());
 
 let cloudStateCache: CloudState | null = null;
 let cloudStatePromise: Promise<CloudState | null> | null = null;
@@ -448,11 +436,15 @@ function createWelcomeNotes(): Note[] {
   ];
 }
 
-function cloneDefaultStickerPacks(): StickerPack[] {
-  return DEFAULT_STICKER_PACKS.map((pack) => ({
-    ...pack,
-    stickers: pack.stickers.map((sticker) => ({ ...sticker })),
-  }));
+function cloneDefaultStickers(): Sticker[] {
+  return DEFAULT_STICKER_PACKS.flatMap((pack) =>
+    pack.stickers.map((sticker) => ({
+      ...sticker,
+      favorite: false,
+      hasBorder: false,
+      builtin: true,
+    })),
+  );
 }
 
 function normalizeTagValue(value: unknown): string | undefined {
@@ -515,6 +507,9 @@ function normalizeSingleSticker(value: unknown, fallbackIndex = 0): Sticker | nu
     label: typeof raw.label === "string" && raw.label.trim() ? raw.label : "Sticker",
     src: raw.src,
     createdAt: typeof raw.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : now,
+    favorite: raw.favorite === true,
+    hasBorder: raw.hasBorder !== false,
+    builtin: raw.builtin === true,
   };
 }
 
@@ -555,75 +550,34 @@ export function normalizeStickerPacksData(value: unknown): StickerPack[] {
   return normalized;
 }
 
-function normalizeSingleLegacyCustomEmoji(value: unknown, fallbackIndex = 0): LegacyCustomEmoji | null {
-  const raw = value as Partial<LegacyCustomEmoji> | null | undefined;
-  const sticker = normalizeSingleSticker(value, fallbackIndex);
-  if (!sticker) return null;
-
-  return {
-    ...sticker,
-    categoryId: typeof raw?.categoryId === "string" && raw.categoryId.trim() ? raw.categoryId : undefined,
-    builtin: raw?.builtin === true,
-  };
-}
-
-function normalizeLegacyCustomEmojisData(value: unknown): LegacyCustomEmoji[] {
+export function normalizeStickersData(value: unknown): Sticker[] {
   if (!Array.isArray(value)) return [];
 
   const seen = new Set<string>();
-  const normalized: LegacyCustomEmoji[] = [];
+  const normalized: Sticker[] = [];
 
   value.forEach((entry, index) => {
-    const emoji = normalizeSingleLegacyCustomEmoji(entry, index);
-    if (!emoji || seen.has(emoji.id)) return;
-    seen.add(emoji.id);
-    normalized.push(emoji);
+    const sticker = normalizeSingleSticker(entry, index);
+    if (!sticker || seen.has(sticker.id)) return;
+    seen.add(sticker.id);
+    normalized.push(sticker);
   });
 
   return normalized;
 }
 
-function migrateLegacyCustomEmojisToStickerPacks(emojis: LegacyCustomEmoji[]): StickerPack[] {
-  if (!emojis.length) return [];
-
-  const grouped = new Map<string, LegacyCustomEmoji[]>();
-  const order: string[] = [];
-
-  for (const emoji of emojis) {
-    const categoryId = emoji.categoryId && LEGACY_STICKER_PACK_TITLES.has(emoji.categoryId)
-      ? emoji.categoryId
-      : "legacy-imported";
-    if (!grouped.has(categoryId)) {
-      grouped.set(categoryId, []);
-      order.push(categoryId);
-    }
-    grouped.get(categoryId)?.push(emoji);
-  }
-
-  const orderedCategoryIds = [
-    ...LEGACY_STICKER_PACK_ORDER.filter((categoryId) => grouped.has(categoryId)),
-    ...order.filter((categoryId) => !LEGACY_STICKER_PACK_ORDER.includes(categoryId)),
-  ];
-
-  return orderedCategoryIds.map((categoryId, index) => {
-    const stickers = grouped.get(categoryId) ?? [];
-    const createdAt = stickers.reduce((minValue, sticker) => Math.min(minValue, sticker.createdAt || Date.now()), stickers[0]?.createdAt ?? Date.now());
-
-    return {
-      id: `legacy-pack-${categoryId}-${index}`,
-      name: LEGACY_STICKER_PACK_TITLES.get(categoryId) ?? "Sticker importati",
-      createdAt,
-      stickers: stickers.map((sticker) => ({
-        id: sticker.id,
-        label: sticker.label,
-        src: sticker.src,
-        createdAt: sticker.createdAt,
-      })),
-    };
-  });
+function flattenStickerPacks(packs: StickerPack[]): Sticker[] {
+  return packs.flatMap((pack) =>
+    pack.stickers.map((sticker) => ({
+      ...sticker,
+      favorite: false,
+      hasBorder: false,
+      builtin: sticker.src.startsWith("/sticker-packs/"),
+    })),
+  );
 }
 
-function normalizeStoredStickerPacksData(value: unknown): StickerPack[] {
+export function normalizeStickerLibraryData(value: unknown): Sticker[] {
   if (!Array.isArray(value)) return [];
   if (!value.length) return [];
 
@@ -633,10 +587,10 @@ function normalizeStoredStickerPacksData(value: unknown): StickerPack[] {
   });
 
   if (hasStickerPackShape) {
-    return normalizeStickerPacksData(value);
+    return flattenStickerPacks(normalizeStickerPacksData(value));
   }
 
-  return migrateLegacyCustomEmojisToStickerPacks(normalizeLegacyCustomEmojisData(value));
+  return normalizeStickersData(value);
 }
 
 async function loadCloudStateClient(force = false) {
@@ -674,7 +628,7 @@ async function loadCloudStateClient(force = false) {
   return cloudStatePromise;
 }
 
-async function saveCloudPatchClient(patch: { notes?: Note[]; customEmojis?: StickerPack[] }) {
+async function saveCloudPatchClient(patch: { notes?: Note[]; customEmojis?: Sticker[] }) {
   if (!CLOUD_SYNC_ENABLED || typeof window === "undefined") return;
   const headers = buildCloudHeaders({
     "Content-Type": "application/json",
@@ -757,71 +711,80 @@ export function saveNotesImmediately(notes: Note[]): void {
 
 export async function resetStoredAppData(): Promise<void> {
   await removeLocalPersistenceValue(KEY);
+  await removeLocalPersistenceValue(STICKER_LIBRARY_KEY);
   await removeLocalPersistenceValue(STICKER_PACK_KEY);
   await removeLocalPersistenceValue(LEGACY_CUSTOM_EMOJI_KEY);
   setStoredCloudSyncAccessKey("");
 }
 
-async function writeStickerPacks(packs: StickerPack[]) {
-  await setLocalPersistenceValue(STICKER_PACK_KEY, packs);
+async function writeStickers(stickers: Sticker[]) {
+  await setLocalPersistenceValue(STICKER_LIBRARY_KEY, stickers);
+  await removeLocalPersistenceValue(STICKER_PACK_KEY);
   await removeLocalPersistenceValue(LEGACY_CUSTOM_EMOJI_KEY);
 }
 
-export async function loadStickerPacks(): Promise<StickerPack[]> {
-  const localNewEntry = await getLocalPersistenceEntry<unknown>(STICKER_PACK_KEY);
+export async function loadStickers(): Promise<Sticker[]> {
+  const localNewEntry = await getLocalPersistenceEntry<unknown>(STICKER_LIBRARY_KEY);
   const hasNewLocal = localNewEntry.hasValue;
   const localNew = localNewEntry.value;
-  const localLegacyEntry = hasNewLocal
+  const localLegacyPackEntry = hasNewLocal
+    ? { hasValue: false, value: undefined as unknown }
+    : await getLocalPersistenceEntry<unknown>(STICKER_PACK_KEY);
+  const hasLegacyPackLocal = localLegacyPackEntry.hasValue;
+  const localLegacyPack = localLegacyPackEntry.value;
+  const localLegacyEntry = hasNewLocal || hasLegacyPackLocal
     ? { hasValue: false, value: undefined as unknown }
     : await getLocalPersistenceEntry<unknown>(LEGACY_CUSTOM_EMOJI_KEY);
   const localLegacy = localLegacyEntry.value;
   const normalizedLocal = hasNewLocal
-    ? normalizeStoredStickerPacksData(localNew)
-    : normalizeStoredStickerPacksData(localLegacy);
+    ? normalizeStickerLibraryData(localNew)
+    : hasLegacyPackLocal
+      ? normalizeStickerLibraryData(localLegacyPack)
+      : normalizeStickerLibraryData(localLegacy);
   const remote = await loadCloudStateClient();
 
   if (remote) {
-    const normalizedRemote = normalizeStoredStickerPacksData(remote.customEmojis);
-    const hasRemoteStickerPacks = remote.customEmojisUpdatedAt > 0 || normalizedRemote.length > 0;
+    const normalizedRemote = normalizeStickerLibraryData(remote.customEmojis);
+    const hasRemoteStickers = remote.customEmojisUpdatedAt > 0 || normalizedRemote.length > 0;
 
-    if (hasRemoteStickerPacks) {
-      await writeStickerPacks(normalizedRemote);
+    if (hasRemoteStickers) {
+      await writeStickers(normalizedRemote);
       return normalizedRemote;
     }
 
-    if (hasNewLocal) {
+    if (hasNewLocal || hasLegacyPackLocal) {
       await saveCloudPatchClient({ customEmojis: normalizedLocal });
-      await writeStickerPacks(normalizedLocal);
+      await writeStickers(normalizedLocal);
       return normalizedLocal;
     }
 
     if (typeof localLegacy !== "undefined") {
-      await writeStickerPacks(normalizedLocal);
+      await writeStickers(normalizedLocal);
       await saveCloudPatchClient({ customEmojis: normalizedLocal });
       return normalizedLocal;
     }
   }
 
-  if (hasNewLocal) {
+  if (hasNewLocal || hasLegacyPackLocal) {
     return normalizedLocal;
   }
 
   if (typeof localLegacy !== "undefined") {
-    await writeStickerPacks(normalizedLocal);
+    await writeStickers(normalizedLocal);
     return normalizedLocal;
   }
 
-  const seeded = cloneDefaultStickerPacks();
-  await writeStickerPacks(seeded);
+  const seeded = cloneDefaultStickers();
+  await writeStickers(seeded);
   if (remote && remote.customEmojisUpdatedAt === 0) {
     await saveCloudPatchClient({ customEmojis: seeded });
   }
   return seeded;
 }
 
-export async function saveStickerPacks(packs: StickerPack[]): Promise<void> {
-  const normalized = normalizeStickerPacksData(packs);
-  await writeStickerPacks(normalized);
+export async function saveStickers(stickers: Sticker[]): Promise<void> {
+  const normalized = normalizeStickersData(stickers);
+  await writeStickers(normalized);
   await saveCloudPatchClient({ customEmojis: normalized });
 }
 

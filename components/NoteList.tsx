@@ -8,6 +8,7 @@ import { getTagIcon } from "@/lib/tagDefinitions";
 import type { Note } from "@/lib/types";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
 import PrintIcon from "@/components/PrintIcon";
+import { CrossIcon, PencilCircleIcon } from "@/components/AppIcons";
 
 function fmt(ts: number) {
   const d = new Date(ts);
@@ -299,9 +300,7 @@ type NoteListProps = {
   onSelectTag: (tag: string | null) => void;
   onSelect: (id: string) => void;
   onNew: () => void;
-  onOpenArchived: () => void;
   onCloseArchived: () => void;
-  onExport: () => void;
   onImport: (file: File) => void | Promise<void>;
   onExportOne: (id: string) => void;
   onPrint: (id: string) => void;
@@ -309,6 +308,7 @@ type NoteListProps = {
   onTogglePin: (id: string) => void;
   onToggleArchive: (id: string) => void;
   onDelete: (id: string) => void;
+  onTagPickerOpenChange?: (open: boolean) => void;
 };
 
 export default function NoteList({
@@ -325,9 +325,7 @@ export default function NoteList({
   onSelectTag,
   onSelect,
   onNew,
-  onOpenArchived,
   onCloseArchived,
-  onExport,
   onImport,
   onExportOne,
   onPrint,
@@ -335,11 +333,11 @@ export default function NoteList({
   onTogglePin,
   onToggleArchive,
   onDelete,
+  onTagPickerOpenChange,
 }: NoteListProps) {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [openMenuPlacement, setOpenMenuPlacement] = useState<"up" | "down">("down");
   const [contextMenuState, setContextMenuState] = useState<{ id: string; left: number; top: number } | null>(null);
-  const [isHeaderMenuOpen, setIsHeaderMenuOpen] = useState(false);
   const [isTagFilterMenuOpen, setIsTagFilterMenuOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -381,14 +379,12 @@ export default function NoteList({
       }
       setOpenMenuId(null);
       setContextMenuState(null);
-      setIsHeaderMenuOpen(false);
       setIsTagFilterMenuOpen(false);
     };
     const onEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpenMenuId(null);
       setContextMenuState(null);
-      setIsHeaderMenuOpen(false);
       setIsTagFilterMenuOpen(false);
     };
 
@@ -408,6 +404,18 @@ export default function NoteList({
       icon: getTagIcon(tag, "tagMenuItemIcon"),
     })),
   ];
+  const activeTagLabel = selectedTag ? `#${selectedTag.toLowerCase()}` : "#all";
+  const shouldShowTagPanel = isTagFilterMenuOpen && !showArchived;
+
+  useEffect(() => {
+    onTagPickerOpenChange?.(shouldShowTagPanel);
+  }, [onTagPickerOpenChange, shouldShowTagPanel]);
+
+  useEffect(() => {
+    return () => {
+      onTagPickerOpenChange?.(false);
+    };
+  }, [onTagPickerOpenChange]);
 
   function resolveNoteMenuPlacement(trigger: HTMLButtonElement): "up" | "down" {
     const listBounds = listRef.current?.getBoundingClientRect();
@@ -469,99 +477,44 @@ export default function NoteList({
                 title="Nuova nota"
               >
                 <span className="newNoteIcon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M7 5C5.34315 5 4 6.34315 4 8V16C4 17.6569 5.34315 19 7 19H17C18.6569 19 20 17.6569 20 16V12.5C20 11.9477 20.4477 11.5 21 11.5C21.5523 11.5 22 11.9477 22 12.5V16C22 18.7614 19.7614 21 17 21H7C4.23858 21 2 18.7614 2 16V8C2 5.23858 4.23858 3 7 3H10.5C11.0523 3 11.5 3.44772 11.5 4C11.5 4.55228 11.0523 5 10.5 5H7Z"
-                      fill="currentColor"
-                    />
-                    <path
-                      fillRule="evenodd"
-                      clipRule="evenodd"
-                      d="M18.8431 3.58579C18.0621 2.80474 16.7957 2.80474 16.0147 3.58579L11.6806 7.91992L11.0148 11.9455C10.8917 12.6897 11.537 13.3342 12.281 13.21L16.3011 12.5394L20.6347 8.20582C21.4158 7.42477 21.4158 6.15844 20.6347 5.37739L18.8431 3.58579ZM13.1933 11.0302L13.5489 8.87995L17.4289 5L19.2205 6.7916L15.34 10.6721L13.1933 11.0302Z"
-                      fill="currentColor"
-                    />
-                  </svg>
+                  <PencilCircleIcon />
                 </span>
               </button>
             ) : null}
-            <div className="noteHeaderMenuWrap">
-              <button
-                className={"btn noteMenuTrigger" + (isHeaderMenuOpen ? " active" : "")}
-                onClick={() => {
-                  setIsHeaderMenuOpen((prev) => !prev);
-                  setIsTagFilterMenuOpen(false);
-                }}
-                type="button"
-                title="Azioni backup"
-                aria-label="Azioni backup"
-                aria-haspopup="menu"
-                aria-expanded={isHeaderMenuOpen ? "true" : "false"}
-              >
-                <svg className="dotsIcon" viewBox="0 0 1024 1024" fill="none" aria-hidden="true">
-                  <path
-                    d="M388.8 896.4v-27.198c.6-2.2 1.6-4.2 2-6.4 8.8-57.2 56.4-102.4 112.199-106.2 62.4-4.4 115.2 31.199 132.4 89.199 2.2 7.6 3.8 15.6 5.8 23.4v27.2c-.6 1.8-1.6 3.399-1.8 5.399-8.6 52.8-46.6 93-98.6 104.4-4 .8-8 2-12 3h-27.2c-1.8-.6-3.6-1.6-5.4-1.8-52-8.4-91.599-45.4-103.6-96.8-1.2-5-2.6-9.6-3.8-14.2zm252.4-768.797-.001 27.202c-.6 2.2-1.6 4.2-1.8 6.4-9 57.6-56.8 102.6-113.2 106.2-62.2 4-114.8-32-131.8-90.2-2.2-7.401-3.8-15-5.6-22.401v-27.2c.6-1.8 1.6-3.4 2-5.2 9.6-52 39.8-86 90.2-102.2 6.6-2.2 13.6-3.4 20.4-5.2h27.2c1.8.6 3.6 1.6 5.4 1.8 52.2 8.6 91.6 45.4 103.6 96.8 1.201 4.8 2.401 9.4 3.601 13.999zm-.001 370.801v27.2c-.6 2.2-1.6 4.2-2 6.4-9 57.4-58.6 103.6-114.6 106-63 2.8-116.4-35.2-131.4-93.8-1.6-6.2-3-12.4-4.4-18.6v-27.2c.6-2.2 1.6-4.2 2-6.4 8.8-57.4 58.6-103.601 114.6-106.2 63-3 116.4 35.2 131.4 93.8 1.6 6.4 3 12.6 4.4 18.8Z"
-                    fill="currentColor"
-                  />
-                </svg>
-              </button>
-
-              {isHeaderMenuOpen ? (
-                <div className="noteMenu noteHeaderMenu" role="menu">
-                  <button
-                    className="noteMenuItem"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      importInputRef.current?.click();
-                    }}
-                  >
-                    <svg className="noteMenuIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        d="M12 20V9m0 0 4 4m-4-4-4 4M5 10V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    Importa
-                  </button>
-                  <button
-                    className="noteMenuItem"
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      setIsHeaderMenuOpen(false);
-                      onExport();
-                    }}
-                  >
-                    <svg className="noteMenuIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path
-                        d="M12 4v11M8 8l4-4 4 4M5 14v3a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-3"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                    Backup
-                  </button>
-                </div>
-              ) : null}
-              <input
-                ref={importInputRef}
-                className="noteImportInputHidden"
-                type="file"
-                accept=".json,.nby,application/json"
-                aria-label="Importa note da file JSON o NBY"
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  if (f) void onImport(f);
-                  e.currentTarget.value = "";
-                  setIsHeaderMenuOpen(false);
-                }}
-              />
-            </div>
+            <button
+              className="btn noteHeaderImportBtn"
+              type="button"
+              title="Importa note o backup"
+              aria-label="Importa note o backup"
+              onClick={() => {
+                setOpenMenuId(null);
+                setContextMenuState(null);
+                setIsTagFilterMenuOpen(false);
+                importInputRef.current?.click();
+              }}
+            >
+              <svg className="noteHeaderImportIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 20V9m0 0 4 4m-4-4-4 4M5 10V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </button>
+            <input
+              ref={importInputRef}
+              className="noteImportInputHidden"
+              type="file"
+              accept=".json,.nby,application/json"
+              aria-label="Importa note da file JSON o NBY"
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void onImport(f);
+                e.currentTarget.value = "";
+              }}
+            />
           </div>
         ) : null}
       </div>
@@ -584,23 +537,22 @@ export default function NoteList({
             onFocus={() => setIsTagFilterMenuOpen(false)}
           />
         </div>
+      </div>
 
+      {!showArchived ? (
         <div className="tagFilterPanel">
           <button
-            className={"btn tagFilterPanelBtn" + (isTagFilterMenuOpen ? " active" : "")}
+            className={"btn tagFilterPanelBtn tagFilterScopeBtn" + (shouldShowTagPanel ? " active" : "")}
             type="button"
             onClick={() => {
-              if (availableTags.length === 0) return;
               setIsTagFilterMenuOpen((prev) => !prev);
               setOpenMenuId(null);
               setContextMenuState(null);
-              setIsHeaderMenuOpen(false);
             }}
-            disabled={availableTags.length === 0}
-            title={availableTags.length === 0 ? "Nessun tag disponibile" : `Filtro tag (${selectedTag ? `#${selectedTag.toLowerCase()}` : "#all"})`}
-            aria-label={availableTags.length === 0 ? "Nessun tag disponibile" : "Apri filtro tag"}
-            aria-haspopup="menu"
-            aria-expanded={availableTags.length > 0 ? (isTagFilterMenuOpen ? "true" : "false") : undefined}
+            title={`Seleziona tag (${activeTagLabel})`}
+            aria-label="Apri selettore tag"
+            aria-haspopup="dialog"
+            aria-expanded={shouldShowTagPanel ? "true" : "false"}
           >
             <svg className="tagFilterIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <path
@@ -612,33 +564,15 @@ export default function NoteList({
               />
               <circle cx="9" cy="9" r="1.2" fill="currentColor" />
             </svg>
+            <span className="tagFilterScopeLabel">{activeTagLabel}</span>
+            <span className="tagFilterScopeChevron" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none">
+                <path d="m7 10 5 5 5-5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </span>
           </button>
-
-          {isTagFilterMenuOpen && availableTags.length > 0 ? (
-            <div className="noteMenu tagFilterMenu" role="menu">
-              {tagOptions.map((option) => (
-                <button
-                  key={option.label}
-                  className={"noteMenuItem" + (selectedTag === option.value ? " active" : "")}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onSelectTag(option.value);
-                    setIsTagFilterMenuOpen(false);
-                  }}
-                >
-                  <span className="tagMenuItemLabel">{option.label}</span>
-                  {option.icon ? (
-                    <span className="tagMenuItemVisual" aria-hidden="true">
-                      {option.icon}
-                    </span>
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
-      </div>
+      ) : null}
 
       <div className="list">
         <OverlayScrollArea
@@ -647,38 +581,6 @@ export default function NoteList({
           contentClassName="listContent"
           viewportRef={listRef}
         >
-          {!showArchived ? (
-            <>
-              <div className="archiveRowDivider archiveRowDividerTop" aria-hidden="true" />
-              <button
-                className="archiveRow"
-                type="button"
-                onClick={() => {
-                  setIsTagFilterMenuOpen(false);
-                  setContextMenuState(null);
-                  onOpenArchived();
-                }}
-              >
-                <span className="archiveRowIcon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" fill="none">
-                    <path
-                      d="M4 7h16l-1.5 11a2 2 0 0 1-2 1.7H7.5a2 2 0 0 1-2-1.7L4 7Zm0-3h16v3H4V4Zm5 7h6"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
-                </span>
-                <span className="archiveRowBody">
-                  <span className="archiveRowTitle">Note archiviate</span>
-                </span>
-                <span className="archiveRowBadge">{archivedCount}</span>
-              </button>
-              <div className="archiveRowDivider" aria-hidden="true" />
-            </>
-          ) : null}
-
           {noteRows.map(({ note: n, titleParts, preview, plainTitle }) => {
             return (
               <div
@@ -690,6 +592,7 @@ export default function NoteList({
                   type="button"
                   onClick={() => {
                     setOpenMenuId(null);
+                    setIsTagFilterMenuOpen(false);
                     setContextMenuState(null);
                     onSelect(n.id);
                   }}
@@ -699,7 +602,6 @@ export default function NoteList({
                     event.preventDefault();
                     event.stopPropagation();
                     setOpenMenuId(null);
-                    setIsHeaderMenuOpen(false);
                     setIsTagFilterMenuOpen(false);
                     setContextMenuState({
                       id: n.id,
@@ -909,13 +811,64 @@ export default function NoteList({
               </div>
             );
           })}
-          {notes.length === 0 && !trimmedQuery && selectedTag ? (
+          {!showArchived && notes.length === 0 && !trimmedQuery && selectedTag ? (
             <div className="muted noteListEmptyState">
               {`Nessuna nota nel tag "${selectedTag}"`}
             </div>
           ) : null}
           <div className="noteListFiller" aria-hidden="true" />
         </OverlayScrollArea>
+        {shouldShowTagPanel ? (
+          <div
+            className="tagFilterPanelOverlay"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Seleziona tag"
+            onClick={() => setIsTagFilterMenuOpen(false)}
+          >
+            <div className="tagFilterPanelSheet" onClick={(event) => event.stopPropagation()}>
+              <div className="tagFilterPanelSheetHeader">
+                <div className="tagFilterPanelSheetHeading">
+                  <div className="tagFilterPanelSheetTitle">Seleziona tag</div>
+                </div>
+                <button
+                  className="tagFilterPanelSheetClose"
+                  type="button"
+                  onClick={() => setIsTagFilterMenuOpen(false)}
+                  aria-label="Chiudi selettore tag"
+                  title="Chiudi"
+                >
+                  <CrossIcon />
+                </button>
+              </div>
+              <div className="tagFilterPanelSheetBody">
+                {tagOptions.map((option) => (
+                  <button
+                    key={option.label}
+                    className={"tagFilterSheetOption" + (selectedTag === option.value ? " active" : "")}
+                    type="button"
+                    onClick={() => {
+                      onSelectTag(option.value);
+                      setIsTagFilterMenuOpen(false);
+                    }}
+                  >
+                    <span className="tagFilterSheetOptionMain">
+                      <span className="tagFilterSheetOptionLabel">{option.label}</span>
+                    </span>
+                    {option.icon ? (
+                      <span className="tagFilterSheetOptionVisual" aria-hidden="true">
+                        {option.icon}
+                      </span>
+                    ) : null}
+                  </button>
+                ))}
+                {availableTags.length === 0 ? (
+                  <div className="tagFilterSheetEmpty">Nessun tag creato: per ora puoi tornare a #all.</div>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        ) : null}
         {usesContextMenu && contextMenuState ? (
           <div
             className="noteMenu noteContextMenu"

@@ -40,6 +40,7 @@ export type AppSettings = {
   showColoredTextHighlights: boolean;
   moveCompletedChecklistItemsToBottom: boolean;
   showMathResultsPreview: boolean;
+  whitePaperMode: boolean;
   showPersistentDesignSwitcher: boolean;
 };
 
@@ -50,6 +51,7 @@ export const DEFAULT_APP_SETTINGS: AppSettings = {
   showColoredTextHighlights: true,
   moveCompletedChecklistItemsToBottom: false,
   showMathResultsPreview: true,
+  whitePaperMode: false,
   showPersistentDesignSwitcher: false,
 };
 
@@ -65,6 +67,7 @@ function areAppSettingsEqual(left: AppSettings, right: AppSettings): boolean {
     left.showColoredTextHighlights === right.showColoredTextHighlights &&
     left.moveCompletedChecklistItemsToBottom === right.moveCompletedChecklistItemsToBottom &&
     left.showMathResultsPreview === right.showMathResultsPreview &&
+    left.whitePaperMode === right.whitePaperMode &&
     left.showPersistentDesignSwitcher === right.showPersistentDesignSwitcher
   );
 }
@@ -114,6 +117,10 @@ export function normalizeAppSettings(value: unknown): AppSettings {
       typeof candidate.showMathResultsPreview === "boolean"
         ? candidate.showMathResultsPreview
         : DEFAULT_APP_SETTINGS.showMathResultsPreview,
+    whitePaperMode:
+      typeof candidate.whitePaperMode === "boolean"
+        ? candidate.whitePaperMode
+        : DEFAULT_APP_SETTINGS.whitePaperMode,
     showPersistentDesignSwitcher:
       typeof candidate.showPersistentDesignSwitcher === "boolean"
         ? candidate.showPersistentDesignSwitcher
@@ -266,6 +273,10 @@ export const APP_SETTINGS_INIT_SCRIPT = `
       typeof parsed?.showMathResultsPreview === "boolean"
         ? parsed.showMathResultsPreview
         : defaults.showMathResultsPreview;
+    const whitePaperMode =
+      typeof parsed?.whitePaperMode === "boolean"
+        ? parsed.whitePaperMode
+        : defaults.whitePaperMode;
     const showPersistentDesignSwitcher =
       typeof parsed?.showPersistentDesignSwitcher === "boolean"
         ? parsed.showPersistentDesignSwitcher
@@ -277,6 +288,7 @@ export const APP_SETTINGS_INIT_SCRIPT = `
       showColoredTextHighlights,
       moveCompletedChecklistItemsToBottom,
       showMathResultsPreview,
+      whitePaperMode,
       showPersistentDesignSwitcher,
     };
     if (typeof desktopStored === "undefined" && desktopStorage?.setItemSync) {

@@ -3,8 +3,8 @@ import { normalizeAppSettings } from "./appSettings";
 import type { DesignMode } from "./designMode";
 import { normalizeDesignMode } from "./designMode";
 import { getNoteTitleFromDoc as titleFromDoc } from "./noteText";
-import { normalizeNotesData, normalizeStickerPacksData } from "./storage";
-import type { Note, StickerPack } from "./types";
+import { normalizeNotesData, normalizeStickerLibraryData } from "./storage";
+import type { Note, Sticker } from "./types";
 
 export const NOTE_FILE_EXTENSION = ".nby";
 export const NOTE_FILE_KIND = "note-di-jaco/single-note";
@@ -28,7 +28,7 @@ export type ParsedNotesImportFile =
       kind: "backup";
       format: "nby-backup" | "json-backup";
       notes: Note[];
-      stickerPacks: StickerPack[];
+      stickers: Sticker[];
       appSettings: AppSettings | null;
       designMode: DesignMode | null;
     });
@@ -72,7 +72,7 @@ export function serializeSingleNoteFile(note: Note) {
 
 export function serializeAppBackupFile(payload: {
   notes: Note[];
-  stickerPacks: StickerPack[];
+  stickers: Sticker[];
   appSettings: AppSettings;
   designMode: DesignMode;
 }) {
@@ -82,7 +82,7 @@ export function serializeAppBackupFile(payload: {
       version: NOTE_FILE_VERSION,
       exportedAt: new Date().toISOString(),
       notes: payload.notes,
-      stickerPacks: payload.stickerPacks,
+      stickers: payload.stickers,
       appSettings: payload.appSettings,
       designMode: payload.designMode,
     },
@@ -109,6 +109,7 @@ export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | 
     kind?: unknown;
     note?: unknown;
     notes?: unknown;
+    stickers?: unknown;
     stickerPacks?: unknown;
     appSettings?: unknown;
     designMode?: unknown;
@@ -135,7 +136,9 @@ export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | 
       format: "nby-backup",
       exportedAt,
       notes: normalizeNotesData(record.notes),
-      stickerPacks: normalizeStickerPacksData(record.stickerPacks),
+      stickers: typeof record.stickers !== "undefined"
+        ? normalizeStickerLibraryData(record.stickers)
+        : normalizeStickerLibraryData(record.stickerPacks),
       appSettings: typeof record.appSettings === "undefined" ? null : normalizeAppSettings(record.appSettings),
       designMode: typeof record.designMode === "undefined" ? null : normalizeDesignMode(record.designMode),
     };
@@ -161,7 +164,7 @@ export function parseNotesImportFile(rawValue: string): ParsedNotesImportFile | 
     format: "json-backup",
     exportedAt,
     notes,
-    stickerPacks: [],
+    stickers: [],
     appSettings: null,
     designMode: null,
   };
