@@ -21,8 +21,8 @@ La tua nuova app preferita!
 Nel design `Classico` dovrai selezionare il testo per far appaire la bolla dell'editor!
 
 ### Gli sticker!
-- importa i tuoi sticker personali;
-- organizza i diversi pacchetti di sticker.
+- importa le tue foto e usale come sticker;
+- potrai anche impostare i tuoi sticker preferiti.
 
 ### Salvataggio!
 - le note sono sempre sincronizzate in locale;
