@@ -11,6 +11,7 @@ import {
 import type { Note, Sticker, StickerPack } from "./types";
 import { normalizeCloudState, type CloudState } from "./cloud-shared";
 import { DEFAULT_STICKER_PACKS } from "./defaultStickerPacks";
+import { normalizeStickerSource } from "./stickers";
 
 const KEY = "notes_v1";
 const LEGACY_CUSTOM_EMOJI_KEY = "custom_emoji_v1";
@@ -499,17 +500,18 @@ export function normalizeNotesData(value: unknown): Note[] {
 function normalizeSingleSticker(value: unknown, fallbackIndex = 0): Sticker | null {
   const raw = value as Partial<Sticker> | null | undefined;
   const now = Date.now();
+  const safeSrc = typeof raw?.src === "string" ? normalizeStickerSource(raw.src) : "";
 
-  if (typeof raw?.src !== "string" || !raw.src.trim()) return null;
+  if (!safeSrc) return null;
 
   return {
-    id: typeof raw.id === "string" && raw.id.trim() ? raw.id : `sticker-${now}-${fallbackIndex}`,
-    label: typeof raw.label === "string" && raw.label.trim() ? raw.label : "Sticker",
-    src: raw.src,
-    createdAt: typeof raw.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : now,
-    favorite: raw.favorite === true,
-    hasBorder: raw.hasBorder !== false,
-    builtin: raw.builtin === true,
+    id: typeof raw?.id === "string" && raw.id.trim() ? raw.id : `sticker-${now}-${fallbackIndex}`,
+    label: typeof raw?.label === "string" && raw.label.trim() ? raw.label : "Sticker",
+    src: safeSrc,
+    createdAt: typeof raw?.createdAt === "number" && Number.isFinite(raw.createdAt) ? raw.createdAt : now,
+    favorite: raw?.favorite === true,
+    hasBorder: raw?.hasBorder !== false,
+    builtin: raw?.builtin === true,
   };
 }
 

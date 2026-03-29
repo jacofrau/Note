@@ -10,6 +10,7 @@ import {
   fileToDataUrl,
   getStickerDisplaySource,
   isStickerImageFile,
+  normalizeStickerSource,
 } from "@/lib/stickers";
 import DialogOverlay from "@/components/dialogs/DialogOverlay";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
@@ -47,6 +48,11 @@ function StickerAssetImage({ src, hasBorder = false, className, alt, ...props }:
   const [renderedSource, setRenderedSource] = useState<{ input: string; output: string } | null>(null);
   const resolvedSrc = hasBorder && renderedSource?.input === src ? renderedSource.output : src;
   const isRendered = hasBorder && renderedSource?.input === src && renderedSource.output !== src;
+  const safeSrc = normalizeStickerSource(resolvedSrc);
+  const canRenderSafeStickerSource =
+    safeSrc.startsWith("data:image/") ||
+    safeSrc.startsWith("blob:") ||
+    safeSrc.startsWith("/sticker-packs/");
 
   useEffect(() => {
     let disposed = false;
@@ -75,13 +81,17 @@ function StickerAssetImage({ src, hasBorder = false, className, alt, ...props }:
     };
   }, [src, hasBorder]);
 
+  if (!canRenderSafeStickerSource) {
+    return null;
+  }
+
   return (
     // next/image can't render this async, locally generated asset pipeline.
     // eslint-disable-next-line @next/next/no-img-element
     <img
       {...props}
       className={className}
-      src={resolvedSrc}
+      src={safeSrc}
       alt={alt}
       draggable={false}
       decoding="async"

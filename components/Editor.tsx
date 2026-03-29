@@ -24,7 +24,7 @@ import { Plugin, TextSelection, type EditorState } from "@tiptap/pm/state";
 import { ReplaceAroundStep, canJoin, liftTarget } from "@tiptap/pm/transform";
 import { Decoration, DecorationSet } from "@tiptap/pm/view";
 import type { DesignMode } from "@/lib/designMode";
-import { getStickerDisplaySource } from "@/lib/stickers";
+import { getStickerDisplaySource, normalizeStickerSource } from "@/lib/stickers";
 import type { NoteDoc } from "@/lib/types";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
 import { PencilCircleIcon } from "@/components/AppIcons";
@@ -1313,13 +1313,16 @@ export default function Editor({
   useEffect(() => {
     if (!editor || !onInsertCustomEmoji) return;
     onInsertCustomEmoji(({ src, hasBorder }) => {
+      const safeSrc = normalizeStickerSource(src);
+      if (!safeSrc) return;
+
       editor
         .chain()
         .focus()
         .insertContent({
           type: "image",
           attrs: {
-            src,
+            src: safeSrc,
             stickerBorder: hasBorder === true,
           },
         })

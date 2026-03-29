@@ -20,6 +20,7 @@ export const ACCEPTED_STICKER_FILE_TYPES = [
 const STICKER_RENDER_TARGET_MAX = 220;
 const STICKER_RENDER_OUTLINE_PX = 6;
 const STICKER_DISPLAY_CACHE = new Map<string, Promise<string>>();
+const SAFE_STICKER_DATA_URL_PATTERN = /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml|bmp|avif);base64,[a-z0-9+/=]+$/i;
 
 function getFileExtension(name: string): string {
   const match = name.toLowerCase().match(/\.[^.]+$/);
@@ -65,13 +66,37 @@ export function normalizeStickerLabel(name: string): string {
   return plain || "Sticker";
 }
 
+export function normalizeStickerSource(src: string): string {
+  const normalized = typeof src === "string" ? src.trim() : "";
+  if (!normalized) return "";
+
+  if (SAFE_STICKER_DATA_URL_PATTERN.test(normalized)) {
+    return normalized;
+  }
+
+  if (normalized.startsWith("blob:")) {
+    return normalized;
+  }
+
+  if (normalized.startsWith("/sticker-packs/")) {
+    return normalized;
+  }
+
+  return "";
+}
+
 function loadImageElement(src: string): Promise<HTMLImageElement> {
+  const safeSrc = normalizeStickerSource(src);
+  if (!safeSrc) {
+    return Promise.reject(new Error("Unsafe sticker image source"));
+  }
+
   return new Promise((resolve, reject) => {
     const image = new window.Image();
     image.decoding = "async";
     image.onload = () => resolve(image);
     image.onerror = () => reject(new Error("Sticker image load failed"));
-    image.src = src;
+    image.src = safeSrc;
 
     if (image.complete && image.naturalWidth > 0 && image.naturalHeight > 0) {
       resolve(image);
@@ -137,14 +162,17 @@ async function renderStickerWithEmbeddedBorder(src: string): Promise<string> {
 }
 
 export async function getStickerDisplaySource(src: string, hasBorder = false): Promise<string> {
-  if (!src || !hasBorder || typeof window === "undefined" || typeof document === "undefined") {
-    return src;
+  const safeSrc = normalizeStickerSource(src);
+  if (!safeSrc) return "";
+
+  if (!hasBorder || typeof window === "undefined" || typeof document === "undefined") {
+    return safeSrc;
   }
 
-  const cacheKey = `bordered:${src}`;
+  const cacheKey = `bordered:${safeSrc}`;
   let cached = STICKER_DISPLAY_CACHE.get(cacheKey);
   if (!cached) {
-    cached = renderStickerWithEmbeddedBorder(src).catch((error) => {
+    cached = renderStickerWithEmbeddedBorder(safeSrc).catch((error) => {
       STICKER_DISPLAY_CACHE.delete(cacheKey);
       throw error;
     });
@@ -154,7 +182,7 @@ export async function getStickerDisplaySource(src: string, hasBorder = false): P
   try {
     return await cached;
   } catch {
-    return src;
+    return safeSrc;
   }
 }
 
@@ -170,7 +198,7 @@ export async function createStickerFromFile(
 ): Promise<Sticker | null> {
   if (!isStickerImageFile(file)) return null;
 
-  const src = options?.srcOverride ?? await fileToDataUrl(file);
+  const src = normalizeStickerSource(options?.srcOverride ?? await fileToDataUrl(file));
   if (!src) return null;
 
   return {

@@ -4,6 +4,7 @@ node_modules/
 # next / build outputs
 .next/
 dist-desktop/
+installer/
 out/
 build/*.bmp
 build/runtime.env
