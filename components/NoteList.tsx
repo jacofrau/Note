@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { DesignMode } from "@/lib/designMode";
 import { getNoteBodySearchTextFromDoc, getNoteBodyTextFromDoc, getNoteLinesFromDoc } from "@/lib/noteText";
@@ -8,7 +8,7 @@ import { getTagIcon } from "@/lib/tagDefinitions";
 import type { Note } from "@/lib/types";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
 import PrintIcon from "@/components/PrintIcon";
-import { CrossIcon, PencilCircleIcon } from "@/components/AppIcons";
+import { PencilCircleIcon } from "@/components/AppIcons";
 
 function fmt(ts: number) {
   const d = new Date(ts);
@@ -343,13 +343,17 @@ export default function NoteList({
   const listRef = useRef<HTMLDivElement | null>(null);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const trimmedQuery = query.trim();
+  const deferredQuery = useDeferredValue(query);
   const usesContextMenu = designMode === "v103b";
-  const contextMenuNote = contextMenuState ? notes.find((note) => note.id === contextMenuState.id) ?? null : null;
+  const contextMenuNote = useMemo(
+    () => (contextMenuState ? notes.find((note) => note.id === contextMenuState.id) ?? null : null),
+    [contextMenuState, notes],
+  );
   const noteRows = useMemo(
     () =>
       notes.map((note) => {
         const titleParts = titlePartsFromDoc(note.doc);
-        const preview = buildContentPreview(note.doc, query);
+        const preview = buildContentPreview(note.doc, deferredQuery);
         const plainTitle = titleParts
           .filter((part): part is Extract<TitlePart, { kind: "text" }> => part.kind === "text")
           .map((part) => part.text)
@@ -363,7 +367,7 @@ export default function NoteList({
           plainTitle,
         };
       }),
-    [notes, query],
+    [deferredQuery, notes],
   );
 
   useEffect(() => {
@@ -396,14 +400,17 @@ export default function NoteList({
     };
   }, []);
 
-  const tagOptions = [
-    { value: null as string | null, label: "#all", icon: null as ReactNode },
-    ...availableTags.map((tag) => ({
-      value: tag,
-      label: `#${tag.toLowerCase()}`,
-      icon: getTagIcon(tag, "tagMenuItemIcon"),
-    })),
-  ];
+  const tagOptions = useMemo(
+    () => [
+      { value: null as string | null, label: "#all", icon: null as ReactNode },
+      ...availableTags.map((tag) => ({
+        value: tag,
+        label: `#${tag.toLowerCase()}`,
+        icon: getTagIcon(tag, "tagMenuItemIcon"),
+      })),
+    ],
+    [availableTags],
+  );
   const activeTagLabel = selectedTag ? `#${selectedTag.toLowerCase()}` : "#all";
   const shouldShowTagPanel = isTagFilterMenuOpen && !showArchived;
 
@@ -617,7 +624,7 @@ export default function NoteList({
                         ? titleParts.map((part, index) =>
                             part.kind === "text" ? (
                               <span key={`${n.id}-t-${index}`}>
-                                {renderHighlightedText(part.text, query, `${n.id}-t-${index}`)}
+                                {renderHighlightedText(part.text, deferredQuery, `${n.id}-t-${index}`)}
                               </span>
                             ) : part.kind === "unicodeEmoji" ? (
                               <span key={`${n.id}-ue-${index}`} className="noteTitleUnicodeEmoji" aria-hidden="true">
@@ -656,7 +663,7 @@ export default function NoteList({
                     {preview.text ? (
                       <span className={"noteMetaPreview" + (preview.hasMatch ? " noteMetaPreviewMatched" : "")}>
                         {preview.trimmedStart ? <span aria-hidden="true">...</span> : null}
-                        {renderHighlightedText(preview.text, preview.hasMatch ? query : "", `${n.id}-preview`)}
+                        {renderHighlightedText(preview.text, preview.hasMatch ? deferredQuery : "", `${n.id}-preview`)}
                         {preview.trimmedEnd ? <span aria-hidden="true">...</span> : null}
                       </span>
                     ) : null}
@@ -827,20 +834,6 @@ export default function NoteList({
             onClick={() => setIsTagFilterMenuOpen(false)}
           >
             <div className="tagFilterPanelSheet" onClick={(event) => event.stopPropagation()}>
-              <div className="tagFilterPanelSheetHeader">
-                <div className="tagFilterPanelSheetHeading">
-                  <div className="tagFilterPanelSheetTitle">Seleziona tag</div>
-                </div>
-                <button
-                  className="tagFilterPanelSheetClose"
-                  type="button"
-                  onClick={() => setIsTagFilterMenuOpen(false)}
-                  aria-label="Chiudi selettore tag"
-                  title="Chiudi"
-                >
-                  <CrossIcon />
-                </button>
-              </div>
               <div className="tagFilterPanelSheetBody">
                 {tagOptions.map((option) => (
                   <button

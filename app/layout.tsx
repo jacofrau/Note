@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
-import { APP_SETTINGS_INIT_SCRIPT, DEFAULT_APP_SETTINGS, getAppThemeColor, getAppThemeIconPath } from "@/lib/appSettings";
+import { APP_SETTINGS_INIT_SCRIPT, DEFAULT_APP_SETTINGS, getAppThemeColor, getAppThemeDisplayIconPath, getAppThemeIconPath } from "@/lib/appSettings";
 import { DEFAULT_DESIGN_MODE, DESIGN_MODE_INIT_SCRIPT } from "@/lib/designMode";
 
 const appIconPath = getAppThemeIconPath(DEFAULT_APP_SETTINGS.theme);
+const appDisplayIconPath = getAppThemeDisplayIconPath(DEFAULT_APP_SETTINGS.theme);
 const sfProDisplay = localFont({
   src: [
     {
@@ -30,8 +31,11 @@ const sfProDisplay = localFont({
 export const metadata: Metadata = {
   title: "Note",
   description: "Note personali con testo ricco, emoji custom e sync cloud opzionale.",
+  manifest: "/manifest.webmanifest",
   icons: {
     icon: appIconPath,
+    shortcut: appIconPath,
+    apple: appDisplayIconPath,
   },
 };
 

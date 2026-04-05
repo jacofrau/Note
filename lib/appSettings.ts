@@ -16,6 +16,15 @@ export const APP_THEME_OPTIONS: ReadonlyArray<{ label: string; value: AppTheme }
 ];
 
 export const APP_THEME_ICON_PATHS: Record<AppTheme, string> = {
+  dark: "/icons/notedijaco_icon.ico?v=20260303-234200",
+  blue: "/icons/notedijaco_blueicon.ico?v=20260327-000700",
+  pink: "/icons/notedijaco_pinkicon.ico?v=20260327-001900",
+  red: "/icons/notedijaco_rediconfix.ico?v=20260327-003200",
+  green: "/icons/notedijaco_greenicon.ico?v=20260326-233449",
+  yellow: "/icons/notedijaco_yellowicon.ico?v=20260326-233703",
+};
+
+export const APP_THEME_DISPLAY_ICON_PATHS: Record<AppTheme, string> = {
   dark: "/icons/notedijaco_icon.png?v=20260303-234200",
   blue: "/icons/notedijaco_blueicon.png?v=20260327-000700",
   pink: "/icons/notedijaco_pinkicon.png?v=20260327-001900",
@@ -135,6 +144,10 @@ export function formatAppDisplayName(userName: string): string {
 
 export function getAppThemeIconPath(theme: AppTheme): string {
   return APP_THEME_ICON_PATHS[normalizeAppTheme(theme)];
+}
+
+export function getAppThemeDisplayIconPath(theme: AppTheme): string {
+  return APP_THEME_DISPLAY_ICON_PATHS[normalizeAppTheme(theme)];
 }
 
 export function getAppThemeColor(theme: AppTheme): string {
@@ -298,18 +311,29 @@ export const APP_SETTINGS_INIT_SCRIPT = `
     document.documentElement.dataset.appOnboardingComplete = hasCompletedOnboarding ? "true" : "false";
     document.documentElement.dataset.appSettings = encodeURIComponent(JSON.stringify(normalized));
     const nextIconPath = iconPaths[theme] || iconPaths.dark;
+    const iconType = nextIconPath.toLowerCase().includes(".ico") ? "image/x-icon" : "image/png";
     const nextThemeColor = themeColors[theme] || themeColors.dark;
     const iconLinks = Array.from(document.querySelectorAll('link[rel~="icon"]'));
     if (iconLinks.length === 0) {
       const link = document.createElement("link");
       link.rel = "icon";
       link.href = nextIconPath;
+      link.type = iconType;
       document.head.appendChild(link);
     } else {
       for (const link of iconLinks) {
         link.href = nextIconPath;
+        link.type = iconType;
       }
     }
+    let shortcutIconLink = document.querySelector('link[rel="shortcut icon"]');
+    if (!shortcutIconLink) {
+      shortcutIconLink = document.createElement("link");
+      shortcutIconLink.rel = "shortcut icon";
+      document.head.appendChild(shortcutIconLink);
+    }
+    shortcutIconLink.href = nextIconPath;
+    shortcutIconLink.type = iconType;
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
     if (themeColorMeta) {
       themeColorMeta.setAttribute("content", nextThemeColor);

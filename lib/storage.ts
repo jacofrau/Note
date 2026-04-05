@@ -17,6 +17,8 @@ const KEY = "notes_v1";
 const LEGACY_CUSTOM_EMOJI_KEY = "custom_emoji_v1";
 const STICKER_LIBRARY_KEY = "stickers_v2";
 const STICKER_PACK_KEY = "sticker_packs_v1";
+const STICKER_DEFAULTS_VERSION_KEY = "sticker_defaults_version_v1";
+const CURRENT_STICKER_DEFAULTS_VERSION = "2026-04-05-jaco-default-sticker-pack";
 const CLOUD_SYNC_ENABLED = process.env.NEXT_PUBLIC_ENABLE_CLOUD_SYNC === "true";
 const CLOUD_SYNC_ACCESS_KEY_STORAGE_KEY = "cloud_sync_access_key_v1";
 
@@ -448,6 +450,67 @@ function cloneDefaultStickers(): Sticker[] {
   );
 }
 
+function isBuiltinSticker(sticker: Sticker): boolean {
+  return sticker.builtin === true || sticker.src.startsWith("/sticker-packs/");
+}
+
+function areStickerLibrariesEqual(left: Sticker[], right: Sticker[]): boolean {
+  if (left.length !== right.length) return false;
+
+  return left.every((sticker, index) => {
+    const candidate = right[index];
+    if (!candidate) return false;
+
+    return (
+      sticker.id === candidate.id
+      && sticker.label === candidate.label
+      && sticker.src === candidate.src
+      && sticker.createdAt === candidate.createdAt
+      && sticker.favorite === candidate.favorite
+      && sticker.hasBorder === candidate.hasBorder
+      && sticker.builtin === candidate.builtin
+    );
+  });
+}
+
+function replaceBuiltinStickers(stickers: Sticker[]): Sticker[] {
+  const customStickers = stickers.filter((sticker) => !isBuiltinSticker(sticker));
+  const builtinById = new Map(
+    stickers
+      .filter((sticker) => isBuiltinSticker(sticker))
+      .map((sticker) => [sticker.id, sticker] as const),
+  );
+
+  const nextBuiltinStickers = cloneDefaultStickers().map((sticker) => {
+    const previous = builtinById.get(sticker.id);
+    if (!previous) return sticker;
+
+    return {
+      ...sticker,
+      favorite: previous.favorite === true,
+      hasBorder: previous.hasBorder === true,
+      builtin: true,
+    };
+  });
+
+  return [...nextBuiltinStickers, ...customStickers];
+}
+
+async function syncStickerDefaultsVersion(stickers: Sticker[]) {
+  const storedVersion = await getLocalPersistenceValue<string>(STICKER_DEFAULTS_VERSION_KEY);
+  if (storedVersion === CURRENT_STICKER_DEFAULTS_VERSION) {
+    return { stickers, changed: false };
+  }
+
+  const synced = replaceBuiltinStickers(stickers);
+  const changed = !areStickerLibrariesEqual(synced, stickers);
+
+  await writeStickers(synced);
+  await setLocalPersistenceValue(STICKER_DEFAULTS_VERSION_KEY, CURRENT_STICKER_DEFAULTS_VERSION);
+
+  return { stickers: synced, changed };
+}
+
 function normalizeTagValue(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const compact = value.replace(/\s+/g, " ").trim();
@@ -715,6 +778,7 @@ export async function resetStoredAppData(): Promise<void> {
   await removeLocalPersistenceValue(KEY);
   await removeLocalPersistenceValue(STICKER_LIBRARY_KEY);
   await removeLocalPersistenceValue(STICKER_PACK_KEY);
+  await removeLocalPersistenceValue(STICKER_DEFAULTS_VERSION_KEY);
   await removeLocalPersistenceValue(LEGACY_CUSTOM_EMOJI_KEY);
   setStoredCloudSyncAccessKey("");
 }
@@ -750,34 +814,39 @@ export async function loadStickers(): Promise<Sticker[]> {
     const hasRemoteStickers = remote.customEmojisUpdatedAt > 0 || normalizedRemote.length > 0;
 
     if (hasRemoteStickers) {
-      await writeStickers(normalizedRemote);
-      return normalizedRemote;
+      const syncedRemote = await syncStickerDefaultsVersion(normalizedRemote);
+      if (syncedRemote.changed) {
+        await saveCloudPatchClient({ customEmojis: syncedRemote.stickers });
+      }
+      return syncedRemote.stickers;
     }
 
     if (hasNewLocal || hasLegacyPackLocal) {
-      await saveCloudPatchClient({ customEmojis: normalizedLocal });
-      await writeStickers(normalizedLocal);
-      return normalizedLocal;
+      const syncedLocal = await syncStickerDefaultsVersion(normalizedLocal);
+      await saveCloudPatchClient({ customEmojis: syncedLocal.stickers });
+      return syncedLocal.stickers;
     }
 
     if (typeof localLegacy !== "undefined") {
-      await writeStickers(normalizedLocal);
-      await saveCloudPatchClient({ customEmojis: normalizedLocal });
-      return normalizedLocal;
+      const syncedLegacy = await syncStickerDefaultsVersion(normalizedLocal);
+      await saveCloudPatchClient({ customEmojis: syncedLegacy.stickers });
+      return syncedLegacy.stickers;
     }
   }
 
   if (hasNewLocal || hasLegacyPackLocal) {
-    return normalizedLocal;
+    const syncedLocal = await syncStickerDefaultsVersion(normalizedLocal);
+    return syncedLocal.stickers;
   }
 
   if (typeof localLegacy !== "undefined") {
-    await writeStickers(normalizedLocal);
-    return normalizedLocal;
+    const syncedLegacy = await syncStickerDefaultsVersion(normalizedLocal);
+    return syncedLegacy.stickers;
   }
 
   const seeded = cloneDefaultStickers();
   await writeStickers(seeded);
+  await setLocalPersistenceValue(STICKER_DEFAULTS_VERSION_KEY, CURRENT_STICKER_DEFAULTS_VERSION);
   if (remote && remote.customEmojisUpdatedAt === 0) {
     await saveCloudPatchClient({ customEmojis: seeded });
   }

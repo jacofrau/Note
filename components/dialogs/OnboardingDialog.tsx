@@ -1,22 +1,17 @@
 "use client";
 
 import type { RefObject } from "react";
-import OverlayScrollArea from "@/components/OverlayScrollArea";
-import { DesignModeIcon, ThemePaletteIcon } from "@/components/AppIcons";
-import DesignModeOption from "@/components/DesignModeOption";
+import { ThemePaletteIcon } from "@/components/AppIcons";
 import DialogOverlay from "@/components/dialogs/DialogOverlay";
 import { APP_THEME_OPTIONS } from "@/lib/appSettings";
-import type { DesignMode } from "@/lib/designMode";
 import { NotesTagIcon } from "@/lib/tagDefinitions";
 import type { AppTheme } from "@/lib/appSettings";
 
 type OnboardingDialogProps = {
   inputRef: RefObject<HTMLInputElement | null>;
   nameValue: string;
-  designValue: DesignMode;
   themeValue: AppTheme;
   onNameChange: (value: string) => void;
-  onDesignChange: (mode: DesignMode) => void;
   onThemeChange: (theme: AppTheme) => void;
   onSubmit: () => void;
 };
@@ -24,17 +19,15 @@ type OnboardingDialogProps = {
 export default function OnboardingDialog({
   inputRef,
   nameValue,
-  designValue,
   themeValue,
   onNameChange,
-  onDesignChange,
   onThemeChange,
   onSubmit,
 }: OnboardingDialogProps) {
   return (
     <DialogOverlay closeOnOverlay={false}>
       <form
-        className="linkDialog settingsDialog welcomeSetupDialog"
+        className="linkDialog welcomeSetupDialog"
         role="dialog"
         aria-modal="true"
         aria-labelledby="welcome-dialog-title"
@@ -46,14 +39,10 @@ export default function OnboardingDialog({
         <div className="welcomeSetupMain">
           <div className="linkDialogTitle" id="welcome-dialog-title">Benvenuto in Note</div>
           <div className="settingsDialogText welcomeSetupLead">
-            Prima di iniziare, scegli come vuoi firmare l&apos;app, il design che preferisci e il tema da usare.
+            Prima di iniziare, scegli come vuoi firmare l&apos;app e il tema da usare.
           </div>
 
-          <OverlayScrollArea
-            className="welcomeSetupScroll"
-            viewportClassName="welcomeSetupScrollViewport"
-            contentClassName="welcomeSetupScrollContent"
-          >
+          <div className="welcomeSetupScroll">
             <label className="linkDialogField">
               <span className="linkDialogLabel linkDialogLabelWithIcon">
                 <span className="linkDialogLabelIcon" aria-hidden="true">
@@ -71,31 +60,6 @@ export default function OnboardingDialog({
                 maxLength={24}
               />
             </label>
-
-            <div className="linkDialogField">
-              <span className="linkDialogLabel linkDialogLabelWithIcon">
-                <span className="linkDialogLabelIcon" aria-hidden="true">
-                  <DesignModeIcon />
-                </span>
-                <span>Scegli il design</span>
-              </span>
-              <div className="designModeChoiceGrid" role="radiogroup" aria-label="Design app">
-                <DesignModeOption
-                  mode="classic"
-                  selected={designValue === "classic"}
-                  title="Classico"
-                  description="Layout a tre pannelli con card piu evidenti."
-                  onSelect={onDesignChange}
-                />
-                <DesignModeOption
-                  mode="v103b"
-                  selected={designValue === "v103b"}
-                  title="Moderno"
-                  description="Layout piu pulito con toolbar centrale e stile iCloud-inspired."
-                  onSelect={onDesignChange}
-                />
-              </div>
-            </div>
 
             <div className="linkDialogField">
               <span className="linkDialogLabel linkDialogLabelWithIcon">
@@ -124,9 +88,9 @@ export default function OnboardingDialog({
             </div>
 
             <div className="tagManageHint welcomeSetupHint">
-              Potrai cambiare nome, design e tema in qualsiasi momento dalle impostazioni.
+              Potrai cambiare nome e tema in qualsiasi momento dalle impostazioni.
             </div>
-          </OverlayScrollArea>
+          </div>
 
           <div className="linkDialogActions welcomeSetupActions">
             <button

@@ -1,10 +1,10 @@
 ﻿"use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Extension, Mark, mergeAttributes, type ChainedCommands } from "@tiptap/core";
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Extension, type ChainedCommands } from "@tiptap/core";
 import Heading from "@tiptap/extension-heading";
 import Link from "@tiptap/extension-link";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, type Editor as TiptapEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Underline from "@tiptap/extension-underline";
 import { TextStyle } from "@tiptap/extension-text-style";
@@ -39,11 +39,6 @@ declare module "@tiptap/core" {
       setIndent: (level: number) => ReturnType;
       indent: () => ReturnType;
       outdent: () => ReturnType;
-    };
-    spoiler: {
-      setSpoiler: () => ReturnType;
-      toggleSpoiler: () => ReturnType;
-      unsetSpoiler: () => ReturnType;
     };
   }
 }
@@ -320,6 +315,101 @@ function getMathResultPreview(state: EditorState, enabled: boolean): { pos: numb
   };
 }
 
+function getTextColorMark(
+  node: ProseMirrorNode,
+  textStyleType: NonNullable<EditorState["schema"]["marks"]["textStyle"]>,
+) {
+  if (!node.isText) return null;
+
+  return node.marks.find(
+    (mark) => mark.type === textStyleType && typeof mark.attrs.color === "string" && mark.attrs.color.trim().length > 0,
+  ) ?? null;
+}
+
+function buildTextColorHighlightNormalizationTransaction(state: EditorState) {
+  const textStyleType = state.schema.marks.textStyle;
+  if (!textStyleType) return null;
+
+  let tr = state.tr;
+  let changed = false;
+
+  state.doc.descendants((node, pos) => {
+    if (!node.inlineContent || node.childCount === 0) return true;
+
+    const children: Array<{ node: ProseMirrorNode; pos: number }> = [];
+    node.forEach((child, offset) => {
+      children.push({
+        node: child,
+        pos: pos + 1 + offset,
+      });
+    });
+
+    const findAdjacentColorMark = (startIndex: number, direction: -1 | 1) => {
+      for (
+        let index = startIndex + direction;
+        index >= 0 && index < children.length;
+        index += direction
+      ) {
+        const candidate = children[index];
+        const candidateText = candidate.node.text ?? "";
+        const candidateColorMark = getTextColorMark(candidate.node, textStyleType);
+
+        if (candidateColorMark) return candidateColorMark;
+        if (candidate.node.isText && candidateText.length > 0) return null;
+        return null;
+      }
+
+      return null;
+    };
+
+    children.forEach((entry, index) => {
+      if (!entry.node.isText) return;
+
+      const text = entry.node.text ?? "";
+      if (!text) return;
+
+      const currentColorMark = getTextColorMark(entry.node, textStyleType);
+      const previousColorMark = findAdjacentColorMark(index, -1);
+      const nextColorMark = findAdjacentColorMark(index, 1);
+
+      if (currentColorMark) {
+        const leadingWhitespace = text.match(/^\s+/u)?.[0] ?? "";
+        if (
+          leadingWhitespace
+          && (!previousColorMark || previousColorMark.attrs.color !== currentColorMark.attrs.color)
+        ) {
+          tr = tr.removeMark(entry.pos, entry.pos + leadingWhitespace.length, textStyleType);
+          changed = true;
+        }
+
+        const trailingWhitespace = text.match(/\s+$/u)?.[0] ?? "";
+        if (
+          trailingWhitespace
+          && (!nextColorMark || nextColorMark.attrs.color !== currentColorMark.attrs.color)
+        ) {
+          tr = tr.removeMark(
+            entry.pos + text.length - trailingWhitespace.length,
+            entry.pos + text.length,
+            textStyleType,
+          );
+          changed = true;
+        }
+        return;
+      }
+
+      if (!/^\s+$/u.test(text) || !previousColorMark || !nextColorMark) return;
+      if (previousColorMark.attrs.color !== nextColorMark.attrs.color) return;
+
+      tr = tr.addMark(entry.pos, entry.pos + text.length, textStyleType.create({ ...previousColorMark.attrs }));
+      changed = true;
+    });
+
+    return true;
+  });
+
+  return changed ? tr : null;
+}
+
 const CustomTaskItem = TaskItem.extend({
   addAttributes() {
     return {
@@ -475,6 +565,24 @@ const ChecklistMetadata = Extension.create<{
             oldState,
             this.options.getShouldMoveCompletedToBottom(),
           );
+        },
+      }),
+    ];
+  },
+});
+
+const TextColorHighlightNormalizer = Extension.create({
+  name: "textColorHighlightNormalizer",
+
+  addProseMirrorPlugins() {
+    return [
+      new Plugin({
+        appendTransaction: (transactions, _oldState, newState) => {
+          if (!transactions.some((transaction) => transaction.docChanged)) {
+            return null;
+          }
+
+          return buildTextColorHighlightNormalizationTransaction(newState);
         },
       }),
     ];
@@ -693,20 +801,6 @@ function liftCurrentItemOutOfList(
   return true;
 }
 
-function TypeIcon() {
-  return (
-    <svg className="editorToolbarTypeIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path
-        d="M12 18L8 5H7L3 18M4.23077 14H10.7692M14.5 10C16 9 20 8 20 11.5C20 15 20 18 20 18M20 12.5C18.5 13 14 13 14 16C14 19 18.5 18 20 15.5"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 const SmartTableBackspace = Extension.create({
   name: "smartTableBackspace",
 
@@ -794,52 +888,6 @@ const LineHeight = Extension.create({
           });
           return cleared;
         },
-    };
-  },
-});
-
-const Spoiler = Mark.create({
-  name: "spoiler",
-
-  addOptions() {
-    return {
-      HTMLAttributes: {},
-    };
-  },
-
-  parseHTML() {
-    return [
-      {
-        tag: 'span[data-spoiler="true"]',
-      },
-    ];
-  },
-
-  renderHTML({ HTMLAttributes }) {
-    return [
-      "span",
-      mergeAttributes(this.options.HTMLAttributes, HTMLAttributes, {
-        "data-spoiler": "true",
-        class: "spoilerText",
-      }),
-      0,
-    ];
-  },
-
-  addCommands() {
-    return {
-      setSpoiler:
-        () =>
-        ({ commands }) =>
-          commands.setMark(this.name),
-      toggleSpoiler:
-        () =>
-        ({ commands }) =>
-          commands.toggleMark(this.name),
-      unsetSpoiler:
-        () =>
-        ({ commands }) =>
-          commands.unsetMark(this.name),
     };
   },
 });
@@ -945,19 +993,19 @@ const Indent = Extension.create({
 });
 
 const COLORS = [
-  { name: "Bianco", value: "#f2f2f7" },
-  { name: "Blu oltremare", value: "#4c63ff" },
-  { name: "Menta", value: "#79f2c0" },
+  { name: "Lilla", value: "#b8a6ff" },
+  { name: "Blu", value: "#4c63ff" },
+  { name: "Verde", value: "#79f2c0" },
   { name: "Giallo", value: "#ffd45c" },
   { name: "Rosa", value: "#ff7db7" },
-  { name: "Lilla", value: "#b8a6ff" },
+  { name: "Rosso", value: "#ec5c6c" },
 ];
-
-const LIST_SYMBOLS = ["-", "\u2022", "\u25E6", "\u25AA", "\u2192", "\u2937", "\u2713", "\u2605", "\u2726", "\u25C6"];
-const DEFAULT_LINE_HEIGHT = "1.55";
-const LINE_HEIGHT_OPTIONS = ["1", "1.2", "1.4", DEFAULT_LINE_HEIGHT, "1.8", "2"];
 const WHITE_TEXT_SWATCH = "#f2f2f7";
 const WHITE_PAPER_TEXT_SWATCH = "#111111";
+
+function serializeClipboardText(slice: Slice) {
+  return slice.content.textBetween(0, slice.content.size, "\n");
+}
 
 type EditorProps = {
   designMode: DesignMode;
@@ -1002,20 +1050,55 @@ function normalizeExternalUrl(value: string): string | null {
   return `https://${trimmed}`;
 }
 
-function TableInsertIcon() {
+function getActiveBlockIndicator(editor: TiptapEditor): { label: string; mono?: boolean } {
+  if (editor.isActive("heading", { level: 4 })) return { label: "H4" };
+  if (editor.isActive("heading", { level: 3 })) return { label: "H3" };
+  if (editor.isActive("heading", { level: 2 })) return { label: "H2" };
+  if (editor.isActive("heading", { level: 1 })) return { label: "H1" };
+  if (editor.isActive("taskList")) return { label: "✓" };
+  if (editor.isActive("orderedList")) return { label: "1." };
+  if (editor.isActive("bulletList")) return { label: "•" };
+  if (editor.isActive("blockquote")) return { label: '"' };
+  if (editor.isActive("codeBlock")) return { label: "</>", mono: true };
+  return { label: "T" };
+}
+
+function getActiveListItemType(state: EditorState): "taskItem" | "listItem" | null {
+  const { $from } = state.selection;
+
+  for (let depth = $from.depth; depth > 0; depth -= 1) {
+    const nodeName = $from.node(depth).type.name;
+    if (nodeName === "taskItem" || nodeName === "listItem") {
+      return nodeName;
+    }
+  }
+
+  return null;
+}
+
+function ChevronDownIcon() {
   return (
     <svg className="tableInsertIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="4" y="4" width="16" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.9" />
-      <path d="M4 9.5h16M4 14.5h16M9.5 4v16" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" />
+      <path
+        d="m7 10 5 5 5-5"
+        stroke="currentColor"
+        strokeWidth="1.9"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
 
-function AdjustmentsIcon() {
+function LinkQuickIcon() {
+  return <span className="tableInsertIcon bubbleQuickLinkSvg" aria-hidden="true" />;
+}
+
+function CheckQuickIcon() {
   return (
     <svg className="tableInsertIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
-        d="M8 6H21M8 12H21M8 18H21M3 6.5H4V5.5H3V6.5ZM3 12.5H4V11.5H3V12.5ZM3 18.5H4V17.5H3V18.5Z"
+        d="m5 12.5 4.2 4.2L19 7.5"
         stroke="currentColor"
         strokeWidth="2"
         strokeLinecap="round"
@@ -1043,39 +1126,6 @@ function NewNoteToolbarIcon() {
   return <PencilCircleIcon className="tableInsertIcon" />;
 }
 
-type EditorModeButtonProps = {
-  active?: boolean;
-  className?: string;
-  disabled?: boolean;
-  icon: ReactNode;
-  label: string;
-  onClick: () => void;
-};
-
-function EditorModeButton({
-  active = false,
-  className = "",
-  disabled = false,
-  icon,
-  label,
-  onClick,
-}: EditorModeButtonProps) {
-  return (
-    <button
-      className={"editorModeButton" + (active ? " active" : "") + (className ? ` ${className}` : "")}
-      disabled={disabled}
-      onClick={onClick}
-      type="button"
-      aria-label={label}
-      title={label}
-    >
-      <span className="editorModeButtonIcon" aria-hidden="true">
-        {icon}
-      </span>
-    </button>
-  );
-}
-
 const EditorLink = Link.extend({
   inclusive: false,
 });
@@ -1097,21 +1147,18 @@ export default function Editor({
 }: EditorProps) {
   const [isFormatOpen, setIsFormatOpen] = useState(false);
   const [isStyleToolsOpen, setIsStyleToolsOpen] = useState(false);
-  const [isListMenuOpen, setIsListMenuOpen] = useState(false);
-  const [isTableMenuOpen, setIsTableMenuOpen] = useState(false);
   const [isEditorFocused, setIsEditorFocused] = useState(false);
-  const [listSymbol, setListSymbol] = useState("-");
+  const [listSymbol, setListSymbol] = useState("\u2022");
   const [hasSelection, setHasSelection] = useState(false);
   const [menuPos, setMenuPos] = useState<{ left: number; top: number } | null>(null);
   const [menuLeft, setMenuLeft] = useState<number | null>(null);
   const [menuPlacement, setMenuPlacement] = useState<"top" | "bottom">("top");
-  const [lineHeight, setLineHeight] = useState("1.55");
-  const [customListSymbol, setCustomListSymbol] = useState("");
   const [isLinkDialogOpen, setIsLinkDialogOpen] = useState(false);
   const [linkDialogLabel, setLinkDialogLabel] = useState("");
   const [linkDialogUrl, setLinkDialogUrl] = useState("https://");
   const [showLastUpdatedBanner, setShowLastUpdatedBanner] = useState(false);
 
+  const editorSelectionRef = useRef<{ from: number; to: number } | null>(null);
   const textSelectionRef = useRef<{ from: number; to: number } | null>(null);
   const linkDialogSelectionRef = useRef<{ from: number; to: number } | null>(null);
   const allowCollapsedBubbleRef = useRef(false);
@@ -1142,7 +1189,7 @@ export default function Editor({
         underline: false,
       }),
       Heading.configure({
-        levels: [1, 2],
+        levels: [1, 2, 3, 4],
       }),
       CustomListItem,
       CustomBulletList,
@@ -1159,8 +1206,8 @@ export default function Editor({
       }),
       TextStyle,
       Color,
+      TextColorHighlightNormalizer,
       InlineCustomEmoji,
-      Spoiler,
       Table.configure({
         resizable: true,
       }),
@@ -1187,6 +1234,7 @@ export default function Editor({
       attributes: {
         class: "tiptap",
       },
+      clipboardTextSerializer: (slice) => serializeClipboardText(slice),
       handleDOMEvents: {
         dragstart: (_view, event) => {
           const target = event.target;
@@ -1204,6 +1252,12 @@ export default function Editor({
     },
   });
 
+  useEffect(() => {
+    if (!editor) return;
+    const selection = editor.state.selection;
+    editorSelectionRef.current = { from: selection.from, to: selection.to };
+  }, [editor]);
+
   const hideBubble = useCallback(() => {
     setHasSelection(false);
     setMenuPos(null);
@@ -1211,8 +1265,6 @@ export default function Editor({
     setMenuPlacement("top");
     setIsFormatOpen(false);
     setIsStyleToolsOpen(false);
-    setIsListMenuOpen(false);
-    setIsTableMenuOpen(false);
     allowCollapsedBubbleRef.current = false;
     textSelectionRef.current = null;
   }, []);
@@ -1316,17 +1368,29 @@ export default function Editor({
       const safeSrc = normalizeStickerSource(src);
       if (!safeSrc) return;
 
-      editor
+      const fallbackSelection = { from: editor.state.selection.from, to: editor.state.selection.to };
+      const targetSelection = editorSelectionRef.current ?? fallbackSelection;
+
+      const inserted = editor
         .chain()
         .focus()
-        .insertContent({
+        .insertContentAt(targetSelection, {
           type: "image",
           attrs: {
             src: safeSrc,
             stickerBorder: hasBorder === true,
           },
+        }, {
+          updateSelection: true,
         })
         .run();
+
+      if (!inserted) return;
+
+      const nextSelection = editor.state.selection;
+      editorSelectionRef.current = { from: nextSelection.from, to: nextSelection.to };
+      textSelectionRef.current = editorSelectionRef.current;
+      setIsEditorFocused(true);
     });
   }, [editor, onInsertCustomEmoji]);
 
@@ -1421,73 +1485,69 @@ export default function Editor({
     [editor],
   );
 
-  const applyLineHeight = useCallback(
-    (value: string) => {
-      setLineHeight(value);
-      if (value === DEFAULT_LINE_HEIGHT) {
-        applyCommand((chain) => chain.unsetLineHeight());
-        return;
-      }
-      applyCommand((chain) => chain.setLineHeight(value));
+  const toggleInlineMark = useCallback(
+    (mark: "bold" | "italic" | "underline" | "strike" | "code") => {
+      applyCommand((chain) => chain.toggleMark(mark, undefined, { extendEmptyMarkRange: true }));
     },
     [applyCommand],
   );
 
-  const shiftLineHeight = useCallback(
-    (direction: -1 | 1) => {
-      const currentIndex = Math.max(0, LINE_HEIGHT_OPTIONS.indexOf(lineHeight));
-      const nextIndex = clamp(currentIndex + direction, 0, LINE_HEIGHT_OPTIONS.length - 1);
-      applyLineHeight(LINE_HEIGHT_OPTIONS[nextIndex]);
-    },
-    [applyLineHeight, lineHeight],
-  );
-
-  const applyListSymbol = useCallback(
-    (symbol: string) => {
+  const applyListBlockType = useCallback(
+    (type: "bulletList" | "orderedList" | "taskList") => {
       if (!editor) return;
 
-      const current = editor.state.selection;
-      let chain = editor.chain().focus();
-      const targetSelection = !current.empty
-        ? { from: current.from, to: current.to }
+      const currentSelection = editor.state.selection;
+      const targetSelection = !currentSelection.empty
+        ? { from: currentSelection.from, to: currentSelection.to }
         : textSelectionRef.current;
+      const activeListItemType = getActiveListItemType(editor.state);
+      const isTargetActive = editor.isActive(type);
 
+      let chain = editor.chain().focus();
       if (targetSelection) {
         chain = chain.setTextSelection(targetSelection);
       }
 
-      if (!editor.isActive("bulletList")) {
-        chain = chain.toggleBulletList();
+      if (activeListItemType) {
+        chain = chain.liftListItem(activeListItemType);
+
+        if (isTargetActive) {
+          chain.run();
+          return;
+        }
       }
 
-      const normalizedSymbol = normalizeSingleVisualSymbol(symbol);
-      if (!normalizedSymbol) return;
+      if (type === "bulletList") {
+        const normalizedSymbol = normalizeSingleVisualSymbol(listSymbol) || "\u2022";
+        chain
+          .toggleBulletList()
+          .updateAttributes("bulletList", { bulletSymbol: normalizedSymbol })
+          .updateAttributes("listItem", { bulletSymbol: normalizedSymbol })
+          .run();
+        setListSymbol(normalizedSymbol);
+        return;
+      }
 
-      chain.updateAttributes("listItem", { bulletSymbol: normalizedSymbol }).run();
-      setListSymbol(normalizedSymbol);
-      setCustomListSymbol(normalizedSymbol);
-      setIsListMenuOpen(false);
+      if (type === "orderedList") {
+        chain.toggleOrderedList().run();
+        return;
+      }
+
+      chain.toggleTaskList().run();
     },
-    [editor],
+    [editor, listSymbol],
   );
-
-  const applyCustomListSymbol = useCallback(() => {
-    const normalized = normalizeSingleVisualSymbol(customListSymbol);
-    if (!normalized) return;
-    setCustomListSymbol(normalized);
-    applyListSymbol(normalized);
-  }, [applyListSymbol, customListSymbol]);
 
   const clampMenuLeft = useCallback(
     (left: number) => {
       const margin = 12;
       const measuredWidth = menuRef.current?.offsetWidth ?? (
-        isFormatOpen && isTableMenuOpen ? 560 : isFormatOpen || isTableMenuOpen ? 520 : 120
+        isFormatOpen || isStyleToolsOpen ? 360 : 390
       );
       const half = measuredWidth / 2;
       return Math.max(margin + half, Math.min(window.innerWidth - margin - half, left));
     },
-    [isFormatOpen, isTableMenuOpen],
+    [isFormatOpen, isStyleToolsOpen],
   );
 
   const updateBubbleAnchor = useCallback(() => {
@@ -1519,7 +1579,7 @@ export default function Editor({
     const gap = 8;
     const margin = 10;
     const estimatedHeight = menuRef.current?.offsetHeight ?? (
-      isFormatOpen || isTableMenuOpen ? 320 : 46
+      isFormatOpen || isStyleToolsOpen ? 320 : 52
     );
     const spaceAbove = selectionTop - margin;
     const spaceBelow = window.innerHeight - selectionBottom - margin;
@@ -1537,7 +1597,7 @@ export default function Editor({
     setMenuLeft(nextLeft);
     setMenuPlacement(nextPlacement);
     textSelectionRef.current = anchorSelection;
-  }, [clampMenuLeft, editor, hideBubble, isFormatOpen, isTableMenuOpen]);
+  }, [clampMenuLeft, editor, hideBubble, isFormatOpen, isStyleToolsOpen]);
 
   const handleLinkAction = useCallback(() => {
     if (!editor) return;
@@ -1594,26 +1654,43 @@ export default function Editor({
     closeLinkDialog();
   }, [closeLinkDialog, editor, linkDialogLabel, linkDialogUrl]);
 
-  const handleSpoilerAction = useCallback(() => {
-    applyCommand((chain) => chain.toggleSpoiler());
-  }, [applyCommand]);
-
   const usesStaticToolbar = designMode === "v103b";
   const can = !!editor;
   const showBubble = !usesStaticToolbar && !!menuPos && hasSelection && isEditorFocused;
   const activeEditor = editor;
-  const isTableActive = !!activeEditor?.isActive("table");
-  const showTablePanel = isTableMenuOpen;
-  const hasPrimaryPanelOpen = isFormatOpen || isStyleToolsOpen || showTablePanel;
-  const hasBothPrimaryPanelsOpen = [isFormatOpen, isStyleToolsOpen, showTablePanel].filter(Boolean).length > 1;
+  const hasPrimaryPanelOpen = isFormatOpen || isStyleToolsOpen;
+  const closePrimaryPanels = useCallback(() => {
+    setIsFormatOpen(false);
+    setIsStyleToolsOpen(false);
+  }, []);
+
+  const clearToParagraph = useCallback(() => {
+    if (!editor) return;
+
+    const currentSelection = editor.state.selection;
+    const targetSelection = !currentSelection.empty
+      ? { from: currentSelection.from, to: currentSelection.to }
+      : textSelectionRef.current;
+
+    let next = editor.chain().focus();
+    if (targetSelection) {
+      next = next.setTextSelection(targetSelection);
+    }
+
+    next = next.clearNodes().unsetLineHeight();
+
+    const applied = next.run();
+    if (applied) return;
+    if (!targetSelection) return;
+
+    editor.chain().focus().setTextSelection(targetSelection.from).clearNodes().unsetLineHeight().run();
+  }, [editor]);
 
   const toggleFormatPanel = useCallback(() => {
     setIsFormatOpen((prev) => {
       const next = !prev;
       if (next) {
         setIsStyleToolsOpen(false);
-        setIsTableMenuOpen(false);
-        setIsListMenuOpen(false);
       }
       return next;
     });
@@ -1622,429 +1699,285 @@ export default function Editor({
   const toggleStyleToolsPanel = useCallback(() => {
     setIsStyleToolsOpen((prev) => {
       const next = !prev;
-      if (next) {
-        setIsFormatOpen(false);
-        setIsTableMenuOpen(false);
-      } else {
-        setIsListMenuOpen(false);
-      }
+      if (next) setIsFormatOpen(false);
       return next;
     });
   }, []);
 
-  const toggleTablePanel = useCallback(() => {
-    if (!editor) return;
-
-    setIsTableMenuOpen((prev) => {
-      const next = !prev;
-      if (next) {
-        setIsFormatOpen(false);
-        setIsStyleToolsOpen(false);
-        setIsListMenuOpen(false);
-      }
-      return next;
-    });
-  }, [editor]);
+  const isPlainTextActive = !!activeEditor
+    && activeEditor.isActive("paragraph")
+    && !activeEditor.isActive("heading")
+    && !activeEditor.isActive("blockquote")
+    && !activeEditor.isActive("bulletList")
+    && !activeEditor.isActive("orderedList")
+    && !activeEditor.isActive("taskList");
+  const currentBlockIndicator = activeEditor ? getActiveBlockIndicator(activeEditor) : { label: "T" };
+  const currentTextColor = typeof activeEditor?.getAttributes("textStyle")?.color === "string"
+    ? activeEditor.getAttributes("textStyle").color as string
+    : null;
+  const quickColorValue = currentTextColor
+    ? (whitePaperMode && currentTextColor === WHITE_TEXT_SWATCH ? WHITE_PAPER_TEXT_SWATCH : currentTextColor)
+    : (whitePaperMode ? WHITE_PAPER_TEXT_SWATCH : WHITE_TEXT_SWATCH);
 
   const formatPanelContent = activeEditor ? (
-    <>
-      <div className="bubbleRow bubbleFormatRow">
+    <div className="bubbleMenuDropdown">
+      <div className="bubbleMenuList">
         <button
-          className={"tool" + (activeEditor.isActive("heading", { level: 1 }) ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleHeading({ level: 1 }))}
-          type="button"
-        >
-          Titolo
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("heading", { level: 2 }) ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleHeading({ level: 2 }))}
-          type="button"
-        >
-          Sottotitolo
-        </button>
-        <button
-          className={"tool monoTool" + (activeEditor.isActive("code") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleCode())}
-          type="button"
-        >
-          Monostile
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("blockquote") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleBlockquote())}
-          type="button"
-        >
-          Citazione
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("paragraph") && !activeEditor.isActive("heading") && !activeEditor.isActive("blockquote") && !activeEditor.isActive("bulletList") && !activeEditor.isActive("orderedList") && !activeEditor.isActive("taskList") ? " active" : "")}
+          className={"bubbleMenuItem" + (isPlainTextActive ? " active" : "")}
           disabled={!can}
           onClick={() => {
-            if (!editor) return;
-
-            const currentSelection = editor.state.selection;
-            const targetSelection = !currentSelection.empty
-              ? { from: currentSelection.from, to: currentSelection.to }
-              : textSelectionRef.current;
-
-            let next = editor.chain().focus();
-            if (targetSelection) {
-              next = next.setTextSelection(targetSelection);
-            }
-
-            next = next.clearNodes().unsetLineHeight();
-
-            const applied = next.run();
-            if (applied) {
-              setLineHeight(DEFAULT_LINE_HEIGHT);
-              return;
-            }
-            if (!targetSelection) return;
-
-            editor.chain().focus().setTextSelection(targetSelection.from).clearNodes().unsetLineHeight().run();
-            setLineHeight(DEFAULT_LINE_HEIGHT);
+            clearToParagraph();
+            closePrimaryPanels();
           }}
           type="button"
         >
-          Corpo
+          <span className="bubbleMenuItemBadge">T</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Corpo</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{isPlainTextActive ? <CheckQuickIcon /> : null}</span>
         </button>
         <button
-          className={"tool" + (activeEditor.isActive("spoiler") ? " active" : "")}
+          className={"bubbleMenuItem" + (activeEditor.isActive("heading", { level: 1 }) ? " active" : "")}
           disabled={!can}
-          onClick={handleSpoilerAction}
+          onClick={() => {
+            applyCommand((chain) => chain.toggleHeading({ level: 1 }));
+            closePrimaryPanels();
+          }}
           type="button"
         >
-          Spoiler
+          <span className="bubbleMenuItemBadge">H1</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Titolo 1</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("heading", { level: 1 }) ? <CheckQuickIcon /> : null}</span>
         </button>
-        {usesStaticToolbar ? (
-          <button
-            className={"tool" + (activeEditor.isActive("link") ? " active" : "")}
-            disabled={!can}
-            onClick={handleLinkAction}
-            type="button"
-          >
-            Link
-          </button>
-        ) : null}
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("heading", { level: 2 }) ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyCommand((chain) => chain.toggleHeading({ level: 2 }));
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge">H2</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Titolo 2</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("heading", { level: 2 }) ? <CheckQuickIcon /> : null}</span>
+        </button>
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("heading", { level: 3 }) ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyCommand((chain) => chain.toggleHeading({ level: 3 }));
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge">H3</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Titolo 3</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("heading", { level: 3 }) ? <CheckQuickIcon /> : null}</span>
+        </button>
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("heading", { level: 4 }) ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyCommand((chain) => chain.toggleHeading({ level: 4 }));
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge">H4</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Titolo 4</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("heading", { level: 4 }) ? <CheckQuickIcon /> : null}</span>
+        </button>
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("bulletList") ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyListBlockType("bulletList");
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge">•</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Elenco puntato</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("bulletList") ? <CheckQuickIcon /> : null}</span>
+        </button>
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("orderedList") ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyListBlockType("orderedList");
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge">1.</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Elenco numerato</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("orderedList") ? <CheckQuickIcon /> : null}</span>
+        </button>
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("taskList") ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyListBlockType("taskList");
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge">✓</span>
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">To-do list</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("taskList") ? <CheckQuickIcon /> : null}</span>
+        </button>
+        <button
+          className={"bubbleMenuItem" + (activeEditor.isActive("blockquote") ? " active" : "")}
+          disabled={!can}
+          onClick={() => {
+            applyCommand((chain) => chain.toggleBlockquote());
+            closePrimaryPanels();
+          }}
+          type="button"
+        >
+          <span className="bubbleMenuItemBadge bubbleMenuItemBadgeQuote" aria-hidden="true" />
+          <span className="bubbleMenuItemCopy">
+            <span className="bubbleMenuItemTitle">Citazione</span>
+          </span>
+          <span className="bubbleMenuItemCheck">{activeEditor.isActive("blockquote") ? <CheckQuickIcon /> : null}</span>
+        </button>
       </div>
-
-      <div className="bubbleRow bubbleColorRow">
-        <button
-          className={"tool" + (activeEditor.isActive("bold") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleBold())}
-          type="button"
-        >
-          B
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("italic") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleItalic())}
-          type="button"
-        >
-          <i>I</i>
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("underline") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleUnderline())}
-          type="button"
-        >
-          <u>U</u>
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("strike") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleStrike())}
-          type="button"
-        >
-          <s>S</s>
-        </button>
-        <div className="bubbleSwatches">
-          {COLORS.map((c) => (
-            <button
-              key={c.value}
-              className={"tool swatchTool" + (activeEditor.getAttributes("textStyle")?.color === c.value ? " active" : "")}
-              data-paper-white={whitePaperMode && c.value === WHITE_TEXT_SWATCH ? "true" : undefined}
-              disabled={!can}
-              onClick={() => applyCommand((chain) => chain.setColor(c.value))}
-              type="button"
-              title={c.name}
-              aria-label={c.name}
-            >
-              <span
-                className={"colorSwatch" + (whitePaperMode && c.value === WHITE_TEXT_SWATCH ? " isWhitePaperPreview" : "")}
-                style={{ background: whitePaperMode && c.value === WHITE_TEXT_SWATCH ? WHITE_PAPER_TEXT_SWATCH : c.value }}
-              />
-            </button>
-          ))}
-        </div>
-      </div>
-    </>
+    </div>
   ) : null;
 
   const styleToolsPanelContent = activeEditor ? (
-    <>
-      <div className="bubbleRow bubbleToolsRow">
+    <div className="bubbleMenuDropdown bubbleColorDropdown">
+      <div className="bubbleColorGrid">
         <button
-          className={"tool" + (isListMenuOpen ? " active" : "")}
+          className={"bubbleColorOption" + (!currentTextColor ? " active" : "")}
           disabled={!can}
-          onClick={() => setIsListMenuOpen((prev) => !prev)}
+          onClick={() => applyCommand((chain) => chain.unsetColor())}
           type="button"
+          aria-label={whitePaperMode ? "Nero" : "Bianco"}
         >
-          Elenco
+          <span className="bubbleColorOptionGlyph default">A</span>
         </button>
-        <button
-          className="tool indentTool"
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.outdent())}
-          type="button"
-          title="Sposta a sinistra"
-          aria-label="Sposta a sinistra"
-        >
-          <svg className="indentActionIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M6 4v16M18 12H8m0 0 3.5-3.5M8 12l3.5 3.5"
-              stroke="currentColor"
-              strokeWidth="1.9"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-        <button
-          className="tool indentTool"
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.indent())}
-          type="button"
-          title="Sposta a destra"
-          aria-label="Sposta a destra"
-        >
-          <svg className="indentActionIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path
-              d="M18 4v16M6 12h10m0 0-3.5-3.5M16 12l-3.5 3.5"
-              stroke="currentColor"
-              strokeWidth="1.9"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
-        <button
-          className={"tool" + (activeEditor.isActive("taskList") ? " active" : "")}
-          disabled={!can}
-          onClick={() => applyCommand((chain) => chain.toggleTaskList())}
-          type="button"
-        >
-          Checklist
-        </button>
-        {!usesStaticToolbar ? (
-          <button
-            className={"tool" + (activeEditor.isActive("link") ? " active" : "")}
-            disabled={!can}
-            onClick={handleLinkAction}
-            type="button"
-          >
-            Link
-          </button>
-        ) : null}
-        <label className="lineHeightControl" title="Spaziatura righe">
-          <span className="lineHeightIconWrap" aria-hidden="true">
-            <svg className="lineHeightIcon" viewBox="0 0 24 24" fill="none">
-              <path
-                d="M6 4v16m0 0-2.5-2.5M6 20l2.5-2.5M6 4 3.5 6.5M6 4l2.5 2.5M12 7h8M12 12h8M12 17h8"
-                stroke="currentColor"
-                strokeWidth="1.9"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </span>
-          <button
-            className="tool spacingStepTool"
-            disabled={!can}
-            onClick={() => shiftLineHeight(-1)}
-            type="button"
-            title="Riduci distanza righe"
-            aria-label="Riduci distanza righe"
-          >
-            -
-          </button>
-          <select
-            className="bubbleSelect"
-            value={lineHeight}
-            onChange={(e) => applyLineHeight(e.target.value)}
-          >
-            {LINE_HEIGHT_OPTIONS.map((value) => (
-              <option key={value} value={value}>
-                {value}x
-              </option>
-            ))}
-          </select>
-          <button
-            className="tool spacingStepTool"
-            disabled={!can}
-            onClick={() => shiftLineHeight(1)}
-            type="button"
-            title="Aumenta distanza righe"
-            aria-label="Aumenta distanza righe"
-          >
-            +
-          </button>
-        </label>
-      </div>
-
-      {isListMenuOpen ? (
-        <>
-          <div className="bubbleRow bubbleListRow">
+        {COLORS.map((c) => {
+          const displayColor = whitePaperMode && c.value === WHITE_TEXT_SWATCH ? WHITE_PAPER_TEXT_SWATCH : c.value;
+          return (
             <button
-              className={"tool listSymbolTool" + (activeEditor.isActive("orderedList") ? " active" : "")}
+              key={c.value}
+              className={"bubbleColorOption" + (currentTextColor === c.value ? " active" : "")}
               disabled={!can}
-              onClick={() => {
-                applyCommand((chain) => chain.toggleOrderedList());
-                setIsListMenuOpen(false);
-              }}
+              onClick={() => applyCommand((chain) => chain.setColor(c.value))}
               type="button"
-              title="Elenco numerato"
+              aria-label={c.name}
+              style={{ "--bubble-color-option-color": displayColor } as CSSProperties}
             >
-              1.
+              <span className="bubbleColorOptionGlyph" style={{ color: displayColor }}>A</span>
             </button>
-            {LIST_SYMBOLS.map((symbol) => (
-              <button
-                key={symbol}
-                className={"tool listSymbolTool" + (listSymbol === symbol ? " active" : "")}
-                disabled={!can}
-                onClick={() => applyListSymbol(symbol)}
-                type="button"
-                title={`Usa ${symbol}`}
-              >
-                {symbol}
-              </button>
-            ))}
-          </div>
-          <div className="bubbleRow bubbleListCustomRow">
-            <input
-              className="listSymbolInput"
-              value={customListSymbol}
-              onChange={(e) => setCustomListSymbol(normalizeSingleVisualSymbol(e.target.value))}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  applyCustomListSymbol();
-                }
-              }}
-              placeholder="Simbolo"
-              spellCheck={false}
-              aria-label="Simbolo elenco personalizzato"
-            />
-            <button
-              className="tool listApplyTool"
-              disabled={!can || !customListSymbol.trim()}
-              onClick={applyCustomListSymbol}
-              type="button"
-            >
-              OK
-            </button>
-          </div>
-        </>
-      ) : null}
-    </>
+          );
+        })}
+      </div>
+    </div>
   ) : null;
 
-  const tablePanelContent = activeEditor ? (
-    <div className="bubbleTablePanel">
-      <div className="bubbleRow bubbleTableRow">
-        <button
-          className="tool"
-          disabled={!can}
-          onClick={() => {
-            if (!editor) return;
-            if (!editor.isActive("table")) {
-              editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-              return;
-            }
-            editor.chain().focus().addRowAfter().run();
-          }}
-          type="button"
-        >
-          {isTableActive ? "Riga +" : "Tabella 3x3"}
-        </button>
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.addColumnAfter(), true)}
-          type="button"
-        >
-          Colonna +
-        </button>
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.toggleHeaderRow(), true)}
-          type="button"
-        >
-          Header riga
-        </button>
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.toggleHeaderColumn(), true)}
-          type="button"
-        >
-          Header col.
-        </button>
-      </div>
-      <div className="bubbleRow bubbleTableRow">
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.addRowBefore(), true)}
-          type="button"
-        >
-          Riga sopra
-        </button>
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.addColumnBefore(), true)}
-          type="button"
-        >
-          Colonna prima
-        </button>
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.deleteRow(), true)}
-          type="button"
-        >
-          Elimina riga
-        </button>
-        <button
-          className="tool"
-          disabled={!can || !isTableActive}
-          onClick={() => applyCommand((chain) => chain.deleteColumn(), true)}
-          type="button"
-        >
-          Elimina col.
-        </button>
-        <button
-          className="tool danger"
-          disabled={!can || !isTableActive}
-          onClick={() => {
-            applyCommand((chain) => chain.deleteTable(), true);
-            setIsTableMenuOpen(false);
-          }}
-          type="button"
-        >
-          Elimina tabella
-        </button>
-      </div>
+  const toolbarPanelContent = isFormatOpen
+    ? formatPanelContent
+    : isStyleToolsOpen
+      ? styleToolsPanelContent
+      : null;
+  const toolbarPanelFrameClassName = "editorToolbarV103Panel" + (isStyleToolsOpen ? " editorToolbarV103PanelCompact" : "");
+  const floatingPanelClassName = "bubblePanel" + (isStyleToolsOpen ? " bubblePanelCompact" : "");
+
+  const quickToolbarContent = activeEditor ? (
+    <div className={"bubbleQuickBar" + (hasPrimaryPanelOpen ? " bubbleQuickBarExpanded" : "")}>
+      <button
+        className={"bubbleQuickButton bubbleTypeButton" + (isFormatOpen ? " active" : "")}
+        disabled={!can}
+        onClick={toggleFormatPanel}
+        type="button"
+        aria-label="Formato"
+      >
+        <span className={"bubbleTypeButtonLabel" + (currentBlockIndicator.mono ? " bubbleTypeButtonLabelMono" : "")}>
+          {currentBlockIndicator.label}
+        </span>
+        <ChevronDownIcon />
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleColorButton" + (isStyleToolsOpen ? " active" : "")}
+        disabled={!can}
+        onClick={toggleStyleToolsPanel}
+        type="button"
+        aria-label="Colore testo"
+      >
+        <span className="bubbleColorOptionGlyph bubbleQuickColorGlyph" style={{ "--bubble-quick-color": quickColorValue } as CSSProperties}>A</span>
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleQuickLetter" + (activeEditor.isActive("bold") ? " active" : "")}
+        disabled={!can}
+        onClick={() => toggleInlineMark("bold")}
+        type="button"
+        aria-label="Grassetto"
+      >
+        <span className="bubbleQuickLetterGlyph">B</span>
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleQuickLetter bubbleQuickItalic" + (activeEditor.isActive("italic") ? " active" : "")}
+        disabled={!can}
+        onClick={() => toggleInlineMark("italic")}
+        type="button"
+        aria-label="Corsivo"
+      >
+        <span className="bubbleQuickLetterGlyph bubbleQuickItalicGlyph">I</span>
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleQuickLetter" + (activeEditor.isActive("underline") ? " active" : "")}
+        disabled={!can}
+        onClick={() => toggleInlineMark("underline")}
+        type="button"
+        aria-label="Sottolineato"
+      >
+        <span className="bubbleQuickLetterGlyph bubbleQuickUnderlineGlyph">U</span>
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleQuickLetter" + (activeEditor.isActive("strike") ? " active" : "")}
+        disabled={!can}
+        onClick={() => toggleInlineMark("strike")}
+        type="button"
+        aria-label="Barrato"
+      >
+        <span className="bubbleQuickLetterGlyph bubbleQuickStrikeGlyph">S</span>
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleQuickCodeButton" + (activeEditor.isActive("code") ? " active" : "")}
+        disabled={!can}
+        onClick={() => toggleInlineMark("code")}
+        type="button"
+        aria-label="Code"
+      >
+        <span className="bubbleQuickCodeGlyph">&lt;/&gt;</span>
+      </button>
+      <button
+        className={"bubbleQuickButton bubbleQuickIconButton" + (activeEditor.isActive("link") ? " active" : "")}
+        disabled={!can}
+        onClick={handleLinkAction}
+        type="button"
+        aria-label="Link"
+      >
+        <LinkQuickIcon />
+      </button>
     </div>
   ) : null;
 
@@ -2052,8 +1985,6 @@ export default function Editor({
     if (!showBubble && !usesStaticToolbar) {
       setIsFormatOpen(false);
       setIsStyleToolsOpen(false);
-      setIsListMenuOpen(false);
-      setIsTableMenuOpen(false);
     }
   }, [showBubble, usesStaticToolbar]);
 
@@ -2061,7 +1992,7 @@ export default function Editor({
     if (!showBubble) return;
     const frame = window.requestAnimationFrame(() => updateBubbleAnchor());
     return () => window.cancelAnimationFrame(frame);
-  }, [showBubble, isFormatOpen, isListMenuOpen, isTableMenuOpen, updateBubbleAnchor]);
+  }, [showBubble, isFormatOpen, isStyleToolsOpen, updateBubbleAnchor]);
 
   useEffect(() => {
     if (!showBubble) return;
@@ -2092,18 +2023,7 @@ export default function Editor({
         editor.getAttributes("bulletList")?.bulletSymbol;
       if (typeof activeSymbol === "string" && activeSymbol.length > 0) {
         const normalizedActiveSymbol = normalizeSingleVisualSymbol(activeSymbol);
-        setListSymbol(normalizedActiveSymbol || activeSymbol);
-        setCustomListSymbol(normalizedActiveSymbol || activeSymbol);
-      }
-
-      const activeLineHeight =
-        editor.getAttributes("listItem")?.lineHeight ??
-        editor.getAttributes("heading")?.lineHeight ??
-        editor.getAttributes("paragraph")?.lineHeight;
-      if (typeof activeLineHeight === "string" && LINE_HEIGHT_OPTIONS.includes(activeLineHeight)) {
-        setLineHeight(activeLineHeight);
-      } else {
-        setLineHeight(DEFAULT_LINE_HEIGHT);
+        setListSymbol(normalizedActiveSymbol || "\u2022");
       }
     };
 
@@ -2157,19 +2077,6 @@ export default function Editor({
       allowCollapsedBubbleRef.current = false;
     };
 
-    const handleSpoilerClick = (event: MouseEvent) => {
-      const target = event.target;
-      if (!(target instanceof HTMLElement)) return;
-
-      const spoiler = target.closest('[data-spoiler="true"]');
-      if (!(spoiler instanceof HTMLElement) || !editor.view.dom.contains(spoiler)) {
-        return;
-      }
-
-      spoiler.classList.toggle("is-revealed");
-    };
-
-    editor.view.dom.addEventListener("click", handleSpoilerClick);
     if (!usesStaticToolbar) {
       editor.view.dom.addEventListener("contextmenu", handleContextMenu);
       editor.view.dom.addEventListener("pointerdown", handleEditorPointerDown);
@@ -2196,6 +2103,7 @@ export default function Editor({
     const syncColorFromSelection = () => {
       setIsEditorFocused(editor.isFocused);
       const selection = editor.state.selection;
+      editorSelectionRef.current = { from: selection.from, to: selection.to };
       if (usesStaticToolbar) {
         textSelectionRef.current = { from: selection.from, to: selection.to };
         syncFormattingState();
@@ -2218,6 +2126,8 @@ export default function Editor({
     };
 
     const handleEditorBlur = () => {
+      const selection = editor.state.selection;
+      editorSelectionRef.current = { from: selection.from, to: selection.to };
       setIsEditorFocused(false);
       if (!usesStaticToolbar) {
         hideBubble();
@@ -2235,7 +2145,6 @@ export default function Editor({
         editor.view.dom.removeEventListener("contextmenu", handleContextMenu);
         editor.view.dom.removeEventListener("pointerdown", handleEditorPointerDown);
       }
-      editor.view.dom.removeEventListener("click", handleSpoilerClick);
       if (!usesStaticToolbar) {
         window.removeEventListener("pointerdown", handlePointerDownOutside);
       }
@@ -2256,7 +2165,6 @@ export default function Editor({
                 onClick={onDeleteNote}
                 type="button"
                 aria-label="Elimina nota"
-                title="Elimina nota"
               >
                 <TrashToolbarIcon />
               </button>
@@ -2265,7 +2173,6 @@ export default function Editor({
                 onClick={onNewNote}
                 type="button"
                 aria-label="Nuova nota"
-                title="Nuova nota"
               >
                 <NewNoteToolbarIcon />
               </button>
@@ -2280,33 +2187,11 @@ export default function Editor({
                     event.preventDefault();
                   }}
                 >
-                  <div className="editorToolbarV103Cluster">
-                    <EditorModeButton
-                      active={isFormatOpen}
-                      disabled={!can}
-                      icon={<TypeIcon />}
-                      label="Formato"
-                      onClick={toggleFormatPanel}
-                    />
-                    <EditorModeButton
-                      active={isStyleToolsOpen}
-                      disabled={!can}
-                      icon={<AdjustmentsIcon />}
-                      label="Elenco"
-                      onClick={toggleStyleToolsPanel}
-                    />
-                    <EditorModeButton
-                      active={showTablePanel}
-                      disabled={!can}
-                      icon={<TableInsertIcon />}
-                      label="Tabella"
-                      onClick={toggleTablePanel}
-                    />
-                  </div>
+                  {quickToolbarContent}
                 </div>
               </div>
 
-              {isFormatOpen || isStyleToolsOpen || showTablePanel ? (
+              {toolbarPanelContent ? (
                 <div
                   className="editorToolbarV103Panels"
                   onMouseDown={(event) => {
@@ -2315,21 +2200,9 @@ export default function Editor({
                     event.preventDefault();
                   }}
                 >
-                  {isFormatOpen ? (
-                    <div className="editorToolbarV103Panel">
-                      {formatPanelContent}
-                    </div>
-                  ) : null}
-                  {isStyleToolsOpen ? (
-                    <div className="editorToolbarV103Panel">
-                      {styleToolsPanelContent}
-                    </div>
-                  ) : null}
-                  {showTablePanel ? (
-                    <div className="editorToolbarV103Panel editorToolbarV103PanelWide">
-                      {tablePanelContent}
-                    </div>
-                  ) : null}
+                  <div className={toolbarPanelFrameClassName}>
+                    {toolbarPanelContent}
+                  </div>
                 </div>
               ) : null}
             </div>
@@ -2350,57 +2223,11 @@ export default function Editor({
               e.preventDefault();
             }}
           >
-            <div className={"bubbleToggleColumn" + (hasPrimaryPanelOpen ? " bubbleToggleColumnExpanded" : "")}>
-              <EditorModeButton
-                active={isFormatOpen}
-                className="bubbleToggle"
-                disabled={!can}
-                icon={<TypeIcon />}
-                label="Formato"
-                onClick={toggleFormatPanel}
-              />
-              <EditorModeButton
-                active={isStyleToolsOpen}
-                className="bubbleToggle"
-                disabled={!can}
-                icon={<AdjustmentsIcon />}
-                label="Elenco"
-                onClick={toggleStyleToolsPanel}
-              />
-              <EditorModeButton
-                active={showTablePanel || isTableActive}
-                className="bubbleToggle"
-                disabled={!can}
-                icon={<TableInsertIcon />}
-                label="Tabella"
-                onClick={toggleTablePanel}
-              />
-            </div>
-
-            {hasPrimaryPanelOpen ? (
-            <div
-              className={
-                "bubblePanels"
-                + (hasPrimaryPanelOpen ? " bubblePanelsExpanded" : "")
-                + (hasBothPrimaryPanelsOpen ? " bubblePanelsStacked" : "")
-              }
-            >
-            {isFormatOpen ? (
-              <div className="bubblePanel">
-                {formatPanelContent}
+            {quickToolbarContent}
+            {toolbarPanelContent ? (
+              <div className={floatingPanelClassName}>
+                {toolbarPanelContent}
               </div>
-            ) : null}
-            {isStyleToolsOpen ? (
-              <div className="bubblePanel">
-                {styleToolsPanelContent}
-              </div>
-            ) : null}
-            {showTablePanel ? (
-              <div className="bubblePanel bubbleTableControlsPanel">
-                {tablePanelContent}
-              </div>
-            ) : null}
-            </div>
             ) : null}
           </div>
         ) : null}

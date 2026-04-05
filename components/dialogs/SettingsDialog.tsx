@@ -1,25 +1,21 @@
 "use client";
 
 import type { ReactNode, RefObject } from "react";
-import { CrossIcon, DesignModeIcon, ExportIcon, ThemePaletteIcon } from "@/components/AppIcons";
-import DesignModeOption from "@/components/DesignModeOption";
+import { CrossIcon, ExportIcon, ThemePaletteIcon } from "@/components/AppIcons";
 import OverlayScrollArea from "@/components/OverlayScrollArea";
 import { APP_THEME_OPTIONS, type AppTheme } from "@/lib/appSettings";
-import type { DesignMode } from "@/lib/designMode";
 import { NotesTagIcon } from "@/lib/tagDefinitions";
 
 export type SettingsDialogTab = "notes" | "design" | "user";
 
 type SettingsDialogProps = {
   activeTab: SettingsDialogTab;
-  designValue: DesignMode;
   isOpen: boolean;
   moveCompletedChecklistItemsToBottom: boolean;
   nameInputRef: RefObject<HTMLInputElement | null>;
   nameValue: string;
   onActiveTabChange: (tab: SettingsDialogTab) => void;
   onClose: () => void;
-  onDesignChange: (mode: DesignMode) => void;
   onDownloadBackup: () => void;
   onNameChange: (value: string) => void;
   onOpenFeedback: () => void;
@@ -29,11 +25,9 @@ type SettingsDialogProps = {
   onToggleMoveCompletedChecklistItemsToBottom: () => void;
   onToggleShowColoredTextHighlights: () => void;
   onToggleShowMathResultsPreview: () => void;
-  onToggleShowPersistentDesignSwitcher: () => void;
   onToggleWhitePaperMode: () => void;
   showColoredTextHighlights: boolean;
   showMathResultsPreview: boolean;
-  showPersistentDesignSwitcher: boolean;
   themeValue: AppTheme;
   whitePaperMode: boolean;
 };
@@ -151,14 +145,12 @@ function SettingsToggleOption({
 
 export default function SettingsDialog({
   activeTab,
-  designValue,
   isOpen,
   moveCompletedChecklistItemsToBottom,
   nameInputRef,
   nameValue,
   onActiveTabChange,
   onClose,
-  onDesignChange,
   onDownloadBackup,
   onNameChange,
   onOpenFeedback,
@@ -168,11 +160,9 @@ export default function SettingsDialog({
   onToggleMoveCompletedChecklistItemsToBottom,
   onToggleShowColoredTextHighlights,
   onToggleShowMathResultsPreview,
-  onToggleShowPersistentDesignSwitcher,
   onToggleWhitePaperMode,
   showColoredTextHighlights,
   showMathResultsPreview,
-  showPersistentDesignSwitcher,
   themeValue,
   whitePaperMode,
 }: SettingsDialogProps) {
@@ -313,38 +303,6 @@ export default function SettingsDialog({
                 aria-labelledby="settings-tab-design"
               >
                 <div className="settingsCategoryBody">
-                  <div className="linkDialogField">
-                    <span className="linkDialogLabel linkDialogLabelWithIcon">
-                      <span className="linkDialogLabelIcon" aria-hidden="true">
-                        <DesignModeIcon />
-                      </span>
-                      <span>Stile</span>
-                    </span>
-                    <div className="designModeChoiceGrid" role="radiogroup" aria-label="Design app">
-                      <DesignModeOption
-                        mode="classic"
-                        selected={designValue === "classic"}
-                        title="Classico"
-                        description="Pannelli separati con look piu marcato."
-                        onSelect={onDesignChange}
-                      />
-                      <DesignModeOption
-                        mode="v103b"
-                        selected={designValue === "v103b"}
-                        title="Moderno"
-                        description="Layout piu essenziale con toolbar centrale."
-                        onSelect={onDesignChange}
-                      />
-                    </div>
-                  </div>
-                  <SettingsToggleOption
-                    active={showPersistentDesignSwitcher}
-                    icon={<DesignModeIcon />}
-                    label="Stile"
-                    title="Pulsante Stile sempre visibile"
-                    meta="Rende il pulsante Stile sempre visibile, affianco al tuo nome."
-                    onToggle={onToggleShowPersistentDesignSwitcher}
-                  />
                   <div className="linkDialogField">
                     <span className="linkDialogLabel linkDialogLabelWithIcon">
                       <span className="linkDialogLabelIcon" aria-hidden="true">

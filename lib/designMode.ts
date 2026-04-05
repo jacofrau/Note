@@ -6,7 +6,7 @@ import {
 
 export type DesignMode = "classic" | "v103b";
 
-export const DEFAULT_DESIGN_MODE: DesignMode = "classic";
+export const DEFAULT_DESIGN_MODE: DesignMode = "v103b";
 export const DESIGN_MODE_STORAGE_KEY = "note_di_jaco_design_mode_v1";
 const designModeListeners = new Set<() => void>();
 

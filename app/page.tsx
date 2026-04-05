@@ -1,10 +1,20 @@
 ﻿"use client";
 
 import dynamic from "next/dynamic";
-import { type ChangeEvent, type DragEvent, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import {
+  type ChangeEvent,
+  type DragEvent,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { nanoid } from "nanoid";
 import packageJson from "../package.json";
-import { DesignModeIcon, InstagramIcon, PencilCircleIcon, StarIcon, TagLabelIcon } from "@/components/AppIcons";
+import { InstagramIcon, PencilCircleIcon, StarIcon, TagLabelIcon } from "@/components/AppIcons";
 import DeleteConfirmDialog from "@/components/dialogs/DeleteConfirmDialog";
 import OnboardingDialog from "@/components/dialogs/OnboardingDialog";
 import ResetAppDialog from "@/components/dialogs/ResetAppDialog";
@@ -15,14 +25,8 @@ import OverlayScrollArea from "@/components/OverlayScrollArea";
 import PrintIcon from "@/components/PrintIcon";
 import { CHANGELOG } from "@/lib/changelog";
 import {
-  checkDesktopForUpdates,
-  downloadDesktopUpdate,
-  getDesktopPlatform,
-  getDesktopUpdateState,
-  installDesktopUpdate,
   saveDesktopNoteFileToDesktop,
   subscribeDesktopOpenNoteFile,
-  subscribeDesktopUpdateState,
   type DesktopOpenNoteFilePayload,
   type DesktopUpdateState,
 } from "@/lib/desktopBridge";
@@ -41,9 +45,8 @@ import {
 } from "@/lib/noteText";
 import {
   DEFAULT_APP_SETTINGS,
-  getAppThemeColor,
-  getAppThemeIconPath,
   getDocumentAppSettings,
+  getAppThemeDisplayIconPath,
   getStoredAppSettings,
   normalizeAppUserName,
   setDocumentAppSettings,
@@ -78,6 +81,12 @@ import {
   setStoredCloudSyncAccessKey,
   sortNotes,
 } from "@/lib/storage";
+import {
+  useAppChrome,
+  useAutoFocusAndSelect,
+  useDesktopUpdateSupport,
+  usePendingSaveLifecycle,
+} from "@/lib/homeClientHooks";
 
 const appVersion = packageJson.version || "1.0.0";
 const cloudSyncEnabled = isCloudSyncEnabledClient();
@@ -114,11 +123,6 @@ const StickerPackPicker = dynamic(() => import("@/components/CustomEmojiPicker")
     </div>
   ),
 });
-
-type AvailableUpdate = {
-  downloadUrl: string;
-  version: string;
-};
 
 type SpecialAppBrandIcon = {
   imageClassName?: string;
@@ -183,79 +187,6 @@ function formatDisplayVersion(version: string): string {
   if (!trimmed) return trimmed;
   if (/^\d+\.\d+\.\d+b$/i.test(trimmed)) return trimmed;
   return trimmed.replace(/-beta(?:\.\d+)?$/i, "b");
-}
-
-type ParsedVersion = {
-  core: number[];
-  prerelease: string[];
-};
-
-function parseVersion(version: string): ParsedVersion {
-  const trimmed = version.trim();
-  const [mainPart, prereleasePart = ""] = trimmed.split("-", 2);
-  const core = mainPart
-    .split(".")
-    .map((part) => Number.parseInt(part, 10))
-    .map((part) => (Number.isFinite(part) ? part : 0));
-
-  const prerelease = prereleasePart
-    .split(".")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  return {
-    core,
-    prerelease,
-  };
-}
-
-function comparePrereleasePart(left: string, right: string): number {
-  const leftNumber = Number.parseInt(left, 10);
-  const rightNumber = Number.parseInt(right, 10);
-  const leftIsNumber = String(leftNumber) === left;
-  const rightIsNumber = String(rightNumber) === right;
-
-  if (leftIsNumber && rightIsNumber) {
-    if (leftNumber > rightNumber) return 1;
-    if (leftNumber < rightNumber) return -1;
-    return 0;
-  }
-
-  if (leftIsNumber) return -1;
-  if (rightIsNumber) return 1;
-
-  return left.localeCompare(right, "en", { sensitivity: "base" });
-}
-
-function compareVersions(left: string, right: string): number {
-  const leftParsed = parseVersion(left);
-  const rightParsed = parseVersion(right);
-  const length = Math.max(leftParsed.core.length, rightParsed.core.length);
-
-  for (let index = 0; index < length; index += 1) {
-    const leftValue = leftParsed.core[index] ?? 0;
-    const rightValue = rightParsed.core[index] ?? 0;
-
-    if (leftValue > rightValue) return 1;
-    if (leftValue < rightValue) return -1;
-  }
-
-  if (leftParsed.prerelease.length === 0 && rightParsed.prerelease.length > 0) return 1;
-  if (leftParsed.prerelease.length > 0 && rightParsed.prerelease.length === 0) return -1;
-
-  const prereleaseLength = Math.max(leftParsed.prerelease.length, rightParsed.prerelease.length);
-  for (let index = 0; index < prereleaseLength; index += 1) {
-    const leftValue = leftParsed.prerelease[index];
-    const rightValue = rightParsed.prerelease[index];
-
-    if (typeof leftValue === "undefined") return -1;
-    if (typeof rightValue === "undefined") return 1;
-
-    const comparison = comparePrereleasePart(leftValue, rightValue);
-    if (comparison !== 0) return comparison;
-  }
-
-  return 0;
 }
 
 function shouldShowDesktopUpdateBadge(updateState: DesktopUpdateState | null): updateState is DesktopUpdateState {
@@ -357,9 +288,6 @@ export default function Home() {
     undo: () => void;
     redo: () => void;
   } | null>(null);
-  const [desktopPlatformState, setDesktopPlatformState] = useState<string | null>(null);
-  const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
-  const [availableUpdate, setAvailableUpdate] = useState<AvailableUpdate | null>(null);
   const [deleteConfirmState, setDeleteConfirmState] = useState<{ id: string; label: string } | null>(null);
   const [tagDialogState, setTagDialogState] = useState<{ id: string; label: string; hasTag: boolean } | null>(null);
   const [tagDialogValue, setTagDialogValue] = useState("");
@@ -418,6 +346,12 @@ export default function Home() {
   const settingsInputRef = useRef<HTMLInputElement | null>(null);
   const onboardingInputRef = useRef<HTMLInputElement | null>(null);
   const settingsPreviewBaselineRef = useRef<{ appSettings: AppSettings; designMode: DesignMode } | null>(null);
+  const {
+    availableUpdate,
+    desktopPlatformState,
+    desktopUpdateState,
+    handleDesktopUpdateAction,
+  } = useDesktopUpdateSupport({ appVersion, updateManifestUrl });
 
   useEffect(() => {
     (async () => {
@@ -432,7 +366,8 @@ export default function Home() {
   }, []);
 
   const sortedNotes = notes;
-  const normalizedQuery = query.trim().toLocaleLowerCase("it-IT");
+  const deferredQuery = useDeferredValue(query);
+  const normalizedQuery = deferredQuery.trim().toLocaleLowerCase("it-IT");
   const hasSearchQuery = normalizedQuery.length > 0;
   const {
     activeCount,
@@ -516,13 +451,14 @@ export default function Home() {
   const appDisplayName = "Note";
   const headerAppDisplayName = hasCustomAppUserName ? `Note di ${normalizedAppUserName}` : "Note";
   const specialAppBrandIcon = useMemo(() => getSpecialAppBrandIcon(normalizedAppUserName), [normalizedAppUserName]);
-  const themeAppIconPath = useMemo(() => getAppThemeIconPath(appSettings.theme), [appSettings.theme]);
+  const themeAppIconPath = useMemo(() => getAppThemeDisplayIconPath(appSettings.theme), [appSettings.theme]);
   const isOnboardingDialogOpen = !appSettings.hasCompletedOnboarding;
   const isDesktopApp = Boolean(desktopPlatformState);
   const showDesktopUpdateBadge = shouldShowDesktopUpdateBadge(desktopUpdateState);
   const desktopUpdateBadgeText = showDesktopUpdateBadge ? getDesktopUpdateBadgeText(desktopUpdateState) : "";
   const desktopUpdateBadgeTitle = showDesktopUpdateBadge ? getDesktopUpdateBadgeTitle(desktopUpdateState) : "";
   const isDesktopUpdateBusy = desktopUpdateState?.kind === "downloading";
+  useAppChrome(appSettings.theme, appDisplayName);
 
   useEffect(() => {
     if (!isOnboardingDialogOpen) return;
@@ -534,119 +470,6 @@ export default function Home() {
     setOnboardingThemeValue(storedSettings.theme);
     setOnboardingDesignValue(storedDesignMode);
   }, [isOnboardingDialogOpen]);
-
-  useEffect(() => {
-    const nextIconPath = getAppThemeIconPath(appSettings.theme);
-    const nextThemeColor = getAppThemeColor(appSettings.theme);
-    const iconLinks = Array.from(document.querySelectorAll<HTMLLinkElement>('link[rel~="icon"]'));
-
-    if (iconLinks.length === 0) {
-      const link = document.createElement("link");
-      link.rel = "icon";
-      link.href = nextIconPath;
-      document.head.appendChild(link);
-    } else {
-      for (const link of iconLinks) {
-        link.href = nextIconPath;
-      }
-    }
-
-    const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
-    if (themeColorMeta) {
-      themeColorMeta.setAttribute("content", nextThemeColor);
-    }
-  }, [appSettings.theme]);
-
-  useEffect(() => {
-    let isDisposed = false;
-    const detectedDesktopPlatform = getDesktopPlatform();
-    setDesktopPlatformState(detectedDesktopPlatform);
-
-    let unsubscribeDesktopUpdateState = () => {};
-
-    async function checkWebForUpdates() {
-      if (!updateManifestUrl) return;
-
-      try {
-        const requestUrl = new URL(updateManifestUrl, window.location.origin);
-        const response = await fetch(requestUrl.toString(), {
-          cache: "no-store",
-        });
-        if (!response.ok) return;
-
-        const data = await response.json();
-        const remoteVersion = typeof data?.version === "string" ? data.version.trim() : "";
-        const downloadUrl = typeof data?.downloadUrl === "string" ? data.downloadUrl.trim() : "";
-
-        if (!remoteVersion || !downloadUrl) {
-          if (!isDisposed) setAvailableUpdate(null);
-          return;
-        }
-
-        if (!isDisposed) {
-          setAvailableUpdate(compareVersions(remoteVersion, appVersion) > 0 ? { downloadUrl, version: remoteVersion } : null);
-        }
-      } catch {
-        if (!isDisposed) setAvailableUpdate(null);
-      }
-    }
-
-    async function setupDesktopUpdates() {
-      unsubscribeDesktopUpdateState = subscribeDesktopUpdateState((nextState) => {
-        if (!isDisposed) {
-          setDesktopUpdateState(nextState);
-        }
-      });
-
-      const initialUpdateState = await getDesktopUpdateState();
-      if (!isDisposed) {
-        setDesktopUpdateState(initialUpdateState);
-      }
-
-      await checkDesktopForUpdates();
-    }
-
-    if (detectedDesktopPlatform) {
-      void setupDesktopUpdates();
-    } else {
-      void checkWebForUpdates();
-    }
-
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== "visible") return;
-
-      if (detectedDesktopPlatform) {
-        void checkDesktopForUpdates();
-        return;
-      }
-
-      void checkWebForUpdates();
-    };
-
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      isDisposed = true;
-      unsubscribeDesktopUpdateState();
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-    };
-  }, []);
-
-  const handleDesktopUpdateAction = useCallback(() => {
-    if (!desktopUpdateState) return;
-
-    if (desktopUpdateState.kind === "available" || desktopUpdateState.kind === "error") {
-      void downloadDesktopUpdate();
-      return;
-    }
-
-    if (desktopUpdateState.kind === "downloaded") {
-      void installDesktopUpdate();
-    }
-  }, [desktopUpdateState]);
-
-  useEffect(() => {
-    document.title = appDisplayName;
-  }, [appDisplayName]);
 
   const flushPendingSave = useCallback(() => {
     if (!hasLoadedNotesRef.current) return;
@@ -671,43 +494,7 @@ export default function Home() {
     setHasManualSelectionCleared(true);
     setActiveId(null);
   }, [flushPendingSave]);
-
-  useEffect(
-    () => () => {
-      flushPendingSave();
-    },
-    [flushPendingSave],
-  );
-
-  useEffect(() => {
-    const onPageHide = () => {
-      flushPendingSave();
-    };
-    const onBeforeUnload = () => {
-      flushPendingSave();
-    };
-    const onVisibilityChange = () => {
-      if (document.visibilityState !== "hidden") return;
-      flushPendingSave();
-    };
-    const removeDesktopBeforeCloseListener = window.noteDiJacoDesktop?.onBeforeClose?.(() => {
-      flushPendingSave();
-    });
-
-    window.addEventListener("pagehide", onPageHide);
-    window.addEventListener("beforeunload", onBeforeUnload);
-    window.addEventListener("unload", onBeforeUnload);
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => {
-      window.removeEventListener("pagehide", onPageHide);
-      window.removeEventListener("beforeunload", onBeforeUnload);
-      window.removeEventListener("unload", onBeforeUnload);
-      document.removeEventListener("visibilitychange", onVisibilityChange);
-      if (typeof removeDesktopBeforeCloseListener === "function") {
-        removeDesktopBeforeCloseListener();
-      }
-    };
-  }, [flushPendingSave]);
+  usePendingSaveLifecycle(flushPendingSave);
 
   const performPrint = useCallback(
     async () => {
@@ -1058,10 +845,6 @@ export default function Home() {
     setStoredDesignMode(nextMode);
   }
 
-  function toggleQuickDesignMode() {
-    applyDesignMode(designMode === "classic" ? "v103b" : "classic");
-  }
-
   function persistAppSettings(nextSettings: typeof appSettings) {
     setDocumentAppSettings(nextSettings);
     setStoredAppSettings(nextSettings);
@@ -1401,46 +1184,6 @@ export default function Home() {
     setIsTagLegendOpen(false);
     setIsChangelogOpen(false);
   }
-
-  useEffect(() => {
-    if (!tagDialogState) return;
-
-    const timeoutId = window.setTimeout(() => {
-      tagDialogInputRef.current?.focus();
-      tagDialogInputRef.current?.select();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [tagDialogState]);
-
-  useEffect(() => {
-    if (!isCloudKeyDialogOpen) return;
-
-    const timeoutId = window.setTimeout(() => {
-      cloudKeyInputRef.current?.focus();
-      cloudKeyInputRef.current?.select();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [isCloudKeyDialogOpen]);
-
-  useEffect(() => {
-    if (!isFeedbackDialogOpen) return;
-
-    const timeoutId = window.setTimeout(() => {
-      feedbackTextareaRef.current?.focus();
-      feedbackTextareaRef.current?.select();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [isFeedbackDialogOpen]);
-
   useEffect(() => {
     if (!isSettingsDialogOpen) return;
 
@@ -1470,11 +1213,6 @@ export default function Home() {
 
   useEffect(() => {
     if (!isSettingsDialogOpen) return;
-
-    const timeoutId = window.setTimeout(() => {
-      settingsInputRef.current?.focus();
-      settingsInputRef.current?.select();
-    }, 0);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -1508,23 +1246,15 @@ export default function Home() {
     document.addEventListener("keydown", onKeyDown);
 
     return () => {
-      window.clearTimeout(timeoutId);
       document.removeEventListener("keydown", onKeyDown);
     };
   }, [isResetAppDialogOpen, isSettingsDialogOpen]);
 
-  useEffect(() => {
-    if (!isOnboardingDialogOpen) return;
-
-    const timeoutId = window.setTimeout(() => {
-      onboardingInputRef.current?.focus();
-      onboardingInputRef.current?.select();
-    }, 0);
-
-    return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [isOnboardingDialogOpen]);
+  useAutoFocusAndSelect(Boolean(tagDialogState), tagDialogInputRef);
+  useAutoFocusAndSelect(isCloudKeyDialogOpen, cloudKeyInputRef);
+  useAutoFocusAndSelect(isFeedbackDialogOpen, feedbackTextareaRef);
+  useAutoFocusAndSelect(isSettingsDialogOpen, settingsInputRef);
+  useAutoFocusAndSelect(isOnboardingDialogOpen, onboardingInputRef);
 
   async function toggleArchive(id: string) {
     const target = notes.find((n) => n.id === id);
@@ -1716,19 +1446,6 @@ export default function Home() {
                 </span>
               )}
             </div>
-            {appSettings.showPersistentDesignSwitcher ? (
-              <button
-                className={"appHeaderDesignToggle" + (designMode === "v103b" ? " active" : "")}
-                type="button"
-                onClick={toggleQuickDesignMode}
-                aria-label={`Passa al design ${designMode === "classic" ? "moderno" : "classico"}`}
-                title={`Passa al design ${designMode === "classic" ? "moderno" : "classico"}`}
-              >
-                <span className="appHeaderDesignToggleIcon" aria-hidden="true">
-                  <DesignModeIcon />
-                </span>
-              </button>
-            ) : null}
           </div>
           {isDesktopApp && showDesktopUpdateBadge ? (
             <button
@@ -2123,10 +1840,8 @@ export default function Home() {
         <OnboardingDialog
           inputRef={onboardingInputRef}
           nameValue={onboardingNameValue}
-          designValue={onboardingDesignValue}
           themeValue={onboardingThemeValue}
           onNameChange={setOnboardingNameValue}
-          onDesignChange={setOnboardingDesignValue}
           onThemeChange={setOnboardingThemeValue}
           onSubmit={saveOnboardingDialog}
         />
@@ -2134,14 +1849,12 @@ export default function Home() {
 
       <SettingsDialog
         activeTab={settingsActiveTab}
-        designValue={settingsDesignValue}
         isOpen={isSettingsDialogOpen}
         moveCompletedChecklistItemsToBottom={settingsMoveCompletedChecklistItemsToBottomValue}
         nameInputRef={settingsInputRef}
         nameValue={settingsNameValue}
         onActiveTabChange={setSettingsActiveTab}
         onClose={closeSettingsDialog}
-        onDesignChange={setSettingsDesignValue}
         onDownloadBackup={() => {
           void downloadBackup();
         }}
@@ -2159,15 +1872,11 @@ export default function Home() {
         onToggleShowMathResultsPreview={() => {
           setSettingsShowMathResultsPreviewValue((prev) => !prev);
         }}
-        onToggleShowPersistentDesignSwitcher={() => {
-          setSettingsShowPersistentDesignSwitcherValue((prev) => !prev);
-        }}
         onToggleWhitePaperMode={() => {
           setSettingsWhitePaperModeValue((prev) => !prev);
         }}
         showColoredTextHighlights={settingsShowColoredTextHighlightsValue}
         showMathResultsPreview={settingsShowMathResultsPreviewValue}
-        showPersistentDesignSwitcher={settingsShowPersistentDesignSwitcherValue}
         themeValue={settingsThemeValue}
         whitePaperMode={settingsWhitePaperModeValue}
       />

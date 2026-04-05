@@ -468,6 +468,9 @@ export default function StickerPackPicker({ onPick, onShowNotice }: CustomEmojiP
               className="customEmojiBtn customStickerTileButton"
               type="button"
               aria-label={`Inserisci ${sticker.label}`}
+              onMouseDown={(event) => {
+                event.preventDefault();
+              }}
               onClick={() => onPick({ src: sticker.src, hasBorder: sticker.hasBorder })}
               onContextMenu={(event) => {
                 event.preventDefault();
